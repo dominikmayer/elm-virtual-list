@@ -14,25 +14,34 @@ module VirtualList
         , Alignment(..)
         )
 
-{-| Efficiently renders large lists by only rendering the visible items in the viewport plus a configurable buffer.
+{-| Efficiently displays large lists by **only rendering the visible items** within the viewport, plus a configurable buffer.
 
-It does so by measuring the height of the displayed elements. To prevent a scrambled UI the list is by default hidden until the initial measurement is done.
+It does so by **dynamically measuring** the height of the displayed elements.
 
-In case you know the heights in advance you might get a better performance by using [`FabienHenon/elm-infinite-list-view`](https://package.elm-lang.org/packages/FabienHenon/elm-infinite-list-view/latest/InfiniteList).
+In case you **know the heights in advance** you might get a better performance by using [`FabienHenon/elm-infinite-list-view`](https://package.elm-lang.org/packages/FabienHenon/elm-infinite-list-view/latest/).
 
-# How it works
+## Usage
 
-To use a virtual list you need to connect it to your `model`, `view` and `update` functions.
+### Model Setup
 
-    module Main exposing (..)
+Include `VirtualList.Model` in your app's **model:**
 
-    import Html exposing (Html, div, text)
     import VirtualList
 
     type alias Model =
         { virtualList : VirtualList.Model
         -- other fields
         }
+
+    defaultModel : Model
+    defaultModel =
+        { virtualList = VirtualList.init
+        -- other fields
+        }
+
+### Update Function
+
+Include `VirtualList.Msg` in your app’s **update function:**
 
     type Msg
         = VirtualListMsg VirtualList.Msg
@@ -49,6 +58,10 @@ To use a virtual list you need to connect it to your `model`, `view` and `update
                     ( { model | virtualList = virtualListModel }, Cmd.map VirtualListMsg virtualListCmd )
             -- other cases
 
+### Rendering
+
+Render the virtual list in your **view:**
+
     view : Model -> Html Msg
     view model =
         VirtualList.view (renderRow model) model.virtualList VirtualListMsg
@@ -56,6 +69,8 @@ To use a virtual list you need to connect it to your `model`, `view` and `update
     renderRow : Model -> String -> Html Msg
     renderRow model id =
         div [] [text id]
+
+# Model & Initialization
 
 @docs Model, defaultConfig, init, initWithConfig, Msg, update
 
@@ -65,11 +80,11 @@ To use a virtual list you need to connect it to your `model`, `view` and `update
 
 # Updating the Items
 
-@docs setItems, setItemsAndRemeasure, setItemsAndRemeasureAll
+@docs setItems, setItemsAndRemeasureAll, setItemsAndRemeasure
 
 # Scrolling
 
-@docs scrollToItem, Alignment(..)
+@docs scrollToItem, Alignment
 -}
 
 import Browser.Dom
@@ -94,28 +109,25 @@ type alias Config =
     }
 
 
-{-| A default configuration for initializing the virtual list model.
+{-| Provides a **default configuration** with sensible initial values.
 
-This configuration provides sensible defaults that work for most use cases. You can customize
-it to better suit your needs by creating a new `Config` record with adjusted values.
+- **`listId`:** The ID of the list container in the DOM.
+- **`initialHeight`:** Estimated height of the list before it is measured.
+- **`defaultItemHeight`:** Default height assigned to items before they are measured.
+- **`showListDuringInitialMeasure`:** If `True`, the list is visible while measuring (potentially causing spacing issues).
+- **`buffer`:** Number of items rendered outside the visible range to ensure smooth scrolling.
+- **`dynamicBuffer`:** If `True`, increases buffer size when scrolling quickly.
+
 
     defaultConfig : Config
     defaultConfig =
-        -- The id of the virtual list DOM element
         { listId = "virtual-list"
-        -- The height of the list before the viewport is first measured
         , initialHeight = 500
-        -- The height of items before they are first being measured
         , defaultItemHeight = 26
-        -- Show the list while loading even if this means items are oddly spaced
         , showListDuringInitialMeasure = False
-        -- The number of items that are loaded outside the visual range
         , buffer = 5
-        -- Whether the buffer should be increased on high scroll speeds
         , dynamicBuffer = True
         }
-
-If you set the buffer to `0` then elements get measured while they are already in view. This might not look good.
 -}
 defaultConfig : Config
 defaultConfig =
@@ -128,14 +140,14 @@ defaultConfig =
     }
 
 
-{-| The `Model` of the virtual list. You need to include it in your model:
+{-| `Model` for maintaining the **virtual list state.** You need to include it in your model:
 
     type alias Model =
         { virtualList : VirtualList.Model
         -- other fields
         }
 
-You create one with the `init` function.
+You **create** one with the `init` function.
 -}
 type alias Model =
     { listId : String
@@ -156,21 +168,21 @@ type alias Model =
     }
 
 
-{-| Initialize the model of the virtual list with the default configuration.
+{-| Initializes a virtual list model using the **default configuration.**
 -}
 init : Model
 init =
     initWithConfig defaultConfig
 
 
-{-| Initialize the model of the virtual list with your own configuration.
+{-| Initializes a virtual list model using a **custom configuration.**
 
     initWithConfig defaultConfig
 
-You can modify the default configuration:
+You can **modify** the default configuration:
 
-    { defaultConfig | buffer = 10 }
-
+    config =
+        { defaultConfig | buffer = 10 }
 -}
 initWithConfig : Config -> Model
 initWithConfig options =
@@ -222,9 +234,11 @@ type RowHeight
     | Measured Float
 
 
-{-| The `Msg` of the virtual list. You need to include it in your `Msg` and make sure it will be processed.
+{-| **Messages** handled by the virtual list.
 
-   type Msg
+You need to **include** `VirtualList.Msg` in your app’s `Msg` type and handle it in `update`.
+
+    type Msg
        = VirtualListMsg VirtualList.Msg
        -- other messages
 -}
@@ -235,18 +249,20 @@ type Msg
     | ViewportUpdated (Result Browser.Dom.Error Browser.Dom.Viewport)
 
 
-{-| The virtual list `update` function. You need to make sure this is called from your code.
+{-| **Updates** the virtual list model in response to messages.
 
-   update : Msg -> Model -> ( Model, Cmd Msg )
-   update msg model =
-       case msg of
-           VirtualListMsg virtualListMsg ->
-               let
-                   ( virtualListModel, virtualListCmd ) =
-                       VirtualList.update virtualListMsg model.virtualList
-               in
-                   ( { model | virtualList = virtualListModel }, Cmd.map VirtualListMsg virtualListCmd )
-           -- other cases
+You must **integrate** this into your `update` function and map the result back to your own `Msg`.
+
+    update : Msg -> Model -> ( Model, Cmd Msg )
+    update msg model =
+        case msg of
+            VirtualListMsg virtualListMsg ->
+                let
+                    ( virtualListModel, virtualListCmd ) =
+                        VirtualList.update virtualListMsg model.virtualList
+                in
+                    ( { model | virtualList = virtualListModel }, Cmd.map VirtualListMsg virtualListCmd )
+            -- other cases
 -}
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
@@ -289,25 +305,33 @@ calculateDynamicBuffer base scrollSpeed =
     base * min maxBufferMultiplier (1 + round (scrollSpeed / 100))
 
 
-{-| Sets the items in the virtual list. For each item you provide one stable id.
+{-| Updates the **list of items** displayed in the virtual list.
+
+Only **new items** are considered for measurement; existing items retain their cached heights.
 
     VirtualList.setItems model.virtualList ids
-
-**Note:** For performance reasons we only measure the height of items when they are first rendered. If you need to remeasure, use `setItemsAndRemeasure`.
 -}
 setItems : Model -> List String -> ( Model, Cmd Msg )
 setItems model newIds =
     setItemsAndRemeasure model { newIds = newIds, idsToRemeasure = [] }
 
 
-{-| Same as `updateItems` but remeasures the whole list.
+{-| Same as `setItems`, but allows **remeasuring** the entire list.
+
+Use this when item heights may have **changed.**
+
+    VirtualList.setItemsAndRemeasureAll model.virtualList newIds
 -}
 setItemsAndRemeasureAll : Model -> List String -> ( Model, Cmd Msg )
 setItemsAndRemeasureAll model newIds =
     setItemsAndRemeasure model { newIds = newIds, idsToRemeasure = newIds }
 
 
-{-| Same as `updateItems` but lets you specify which items should be remeasured.
+{-| Same as `setItems`, but allows specifying which **items should be remeasured.**
+
+This is useful when only a **subset of items** might have changed in height.
+
+    VirtualList.setItemsAndRemeasure model.virtualList { newIds = newIds, idsToRemeasure = changedIds }
 -}
 setItemsAndRemeasure : Model -> { newIds : List String, idsToRemeasure : List String } -> ( Model, Cmd Msg )
 setItemsAndRemeasure model { newIds, idsToRemeasure } =
@@ -542,12 +566,13 @@ rowId index =
     "virtual-list-item-" ++ String.fromInt index
 
 
-{-| Defines where in the viewport an item should be shown when scrolling to it.
+{-| Defines where an item should **appear in the viewport** when scrolled to.
 
-    type Alignment
-        = Top
-        | Center
-        | Bottom
+### Variants:
+
+  - **`Top`:** Scrolls the item to the top.
+  - **`Center`:** Scrolls the item to the center.
+  - **`Bottom`:** Scrolls the item to the bottom.
 -}
 type Alignment
     = Top
@@ -555,13 +580,11 @@ type Alignment
     | Bottom
 
 
-{-| Scroll the item with the given unique id into the viewport, either at the top, center or bottom.
+{-| Scrolls to the **specified item** in the virtual list.
 
-We won't scroll if the item is already in the viewport.
+Does nothing if the item is **already visible.**
 
-You need to make sure that you map the returned `VirtualList.Msg` back to your own `Msg`:
-
-    Cmd.map VirtualListMsg (VirtualList.scrollToItem model.virtualList index VirtualList.Center)
+    Cmd.map VirtualListMsg (VirtualList.scrollToItem model.virtualList "item-42" VirtualList.Center)
 -}
 scrollToItem : Model -> String -> Alignment -> Cmd Msg
 scrollToItem model id alignment =
@@ -622,15 +645,15 @@ scrollToPosition position =
             |> Task.attempt (\_ -> NoOp)
 
 
-{-| Display the virtual list.
+{-| **Renders** the virtual list.
 
-You provide it with
+You **provide** it with
 
-- a function that returns the `Html` for a given unique id,
-- the virtual list `Model` and
-- the virtual list message type on your side.
+- **function** that renders an item given its ID,
+- the virtual list **`Model`** and
+- the virtual list **message** type on your side.
 
-In your code this would look like this:
+In **your code** this would look like this:
 
     view : Model -> Html Msg
     view model =
@@ -639,6 +662,8 @@ In your code this would look like this:
     renderRow : Model -> String -> Html Msg
     renderRow model id =
         div [] [text id]
+
+`renderRow` is executed **lazily.**
 -}
 view : (String -> Html msg) -> Model -> (Msg -> msg) -> Html msg
 view renderRow model toSelf =
