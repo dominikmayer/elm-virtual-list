@@ -165,6 +165,7 @@ type alias Model =
     , cumulativeHeights : Dict Int Float
     , scrollTop : Float
     , previousScrollTop : Float
+    , pendingScroll : Maybe ( String, Alignment )
     }
 
 
@@ -226,6 +227,7 @@ initWithConfig options =
         , cumulativeHeights = Dict.empty
         , scrollTop = 0
         , previousScrollTop = 0
+        , pendingScroll = Nothing
         }
 
 
@@ -489,14 +491,17 @@ updateRowHeightWithMeasurement model index element =
                 True
             else
                 model.showList
+
+        newModel =
+            { model
+                | showList = showList
+                , unmeasuredRows = remainingUnmeasured
+                , cumulativeHeights = updatedCumulativeHeights
+                , rowHeights = updatedRowHeights
+            }
     in
-        ( { model
-            | showList = showList
-            , unmeasuredRows = remainingUnmeasured
-            , cumulativeHeights = updatedCumulativeHeights
-            , rowHeights = updatedRowHeights
-          }
-        , Cmd.none
+        ( newModel
+        , maybePendingScrollCmd newModel
         )
 
 
@@ -586,31 +591,42 @@ Does nothing if the item is **already visible.**
 
     Cmd.map VirtualListMsg (VirtualList.scrollToItem model.virtualList "item-42" VirtualList.Center)
 -}
-scrollToItem : Model -> String -> Alignment -> Cmd Msg
+scrollToItem : Model -> String -> Alignment -> ( Model, Cmd Msg )
 scrollToItem model id alignment =
-    case findIndexForId model.ids id of
+    let
+        newModel =
+            { model | pendingScroll = Just ( id, alignment ) }
+    in
+        ( newModel, scrollCmdForTarget model id alignment )
+
+
+maybePendingScrollCmd : Model -> Cmd Msg
+maybePendingScrollCmd model =
+    case model.pendingScroll of
+        Just ( targetId, alignment ) ->
+            scrollCmdForTarget model targetId alignment
+
+        Nothing ->
+            Cmd.none
+
+
+scrollCmdForTarget : Model -> String -> Alignment -> Cmd Msg
+scrollCmdForTarget model targetId alignment =
+    case findIndexForId model.ids targetId of
         Just index ->
             let
                 elementStart =
-                    case Dict.get (index - 1) model.cumulativeHeights of
-                        Just h ->
-                            h
+                    computeElementStart model index
 
-                        Nothing ->
-                            toFloat index * model.defaultItemHeight
-
-                nextElementStart =
-                    Dict.get index model.cumulativeHeights
-
-                needsScroll =
-                    abs (model.scrollTop - elementStart) > 1
+                scrollNeeded =
+                    needsScrollCorrection model elementStart
             in
-                if needsScroll then
+                if scrollNeeded then
                     scrollToPosition
                         { targetId = model.listId
                         , elementStart = elementStart
                         , containerHeight = model.height
-                        , nextElementStart = nextElementStart
+                        , nextElementStart = Dict.get index model.cumulativeHeights
                         , alignment = alignment
                         }
                 else
@@ -618,6 +634,21 @@ scrollToItem model id alignment =
 
         Nothing ->
             Cmd.none
+
+
+computeElementStart : Model -> Int -> Float
+computeElementStart model index =
+    case Dict.get (index - 1) model.cumulativeHeights of
+        Just h ->
+            h
+
+        Nothing ->
+            toFloat index * model.defaultItemHeight
+
+
+needsScrollCorrection : Model -> Float -> Bool
+needsScrollCorrection model targetOffset =
+    abs (model.scrollTop - targetOffset) > 1
 
 
 type alias ScrollPosition =
