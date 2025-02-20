@@ -157,6 +157,7 @@ type alias Model =
     , baseBuffer : Int
     , dynamicBuffer : Bool
     , buffer : Int
+    , showListDuringInitialMeasure : Bool
     , showList : Bool
     , visibleRange : ( Int, Int )
     , firstRender : Bool
@@ -218,6 +219,7 @@ initWithConfig options =
         , baseBuffer = validBuffer
         , dynamicBuffer = options.dynamicBuffer
         , buffer = validBuffer
+        , showListDuringInitialMeasure = options.showListDuringInitialMeasure
         , showList = options.showListDuringInitialMeasure
         , defaultItemHeight = validDefaultItemHeight
         , visibleRange = ( 0, 20 )
@@ -326,7 +328,11 @@ Use this when item heights may have **changed.**
 -}
 setItemsAndRemeasureAll : Model -> List String -> ( Model, Cmd Msg )
 setItemsAndRemeasureAll model newIds =
-    setItemsAndRemeasure model { newIds = newIds, idsToRemeasure = newIds }
+    let
+        ( newModel, cmd ) =
+            setItemsAndRemeasure model { newIds = newIds, idsToRemeasure = newIds }
+    in
+        ( { newModel | showList = model.showListDuringInitialMeasure }, cmd )
 
 
 {-| Same as `setItems`, but allows specifying which **items should be remeasured.**
@@ -486,23 +492,37 @@ updateRowHeightWithMeasurement model index element =
         remainingUnmeasured =
             Set.remove index model.unmeasuredRows
 
-        showList =
-            if Set.isEmpty remainingUnmeasured then
-                True
-            else
-                model.showList
-
-        newModel =
+        newModelPre =
             { model
-                | showList = showList
-                , unmeasuredRows = remainingUnmeasured
+                | unmeasuredRows = remainingUnmeasured
                 , cumulativeHeights = updatedCumulativeHeights
                 , rowHeights = updatedRowHeights
             }
+
+        newModel =
+            checkAndReveal newModelPre
     in
         ( newModel
         , maybePendingScrollCmd newModel
         )
+
+
+checkAndReveal : Model -> Model
+checkAndReveal model =
+    let
+        ( start, end ) =
+            model.visibleRange
+
+        visibleIndices =
+            List.range start (end - 1)
+
+        unmeasuredVisible =
+            List.filter (\i -> isUnmeasured model.rowHeights i) visibleIndices
+    in
+        if List.isEmpty unmeasuredVisible then
+            { model | showList = True }
+        else
+            model
 
 
 updateOnViewportChange : Model -> Result Browser.Dom.Error Browser.Dom.Viewport -> ( Model, Cmd Msg )
