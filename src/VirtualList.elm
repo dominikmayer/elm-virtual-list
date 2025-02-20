@@ -592,7 +592,12 @@ scrollToItem model id alignment =
         Just index ->
             let
                 elementStart =
-                    Maybe.withDefault 0 (Dict.get (index - 1) model.cumulativeHeights)
+                    case Dict.get (index - 1) model.cumulativeHeights of
+                        Just h ->
+                            h
+
+                        Nothing ->
+                            toFloat index * model.defaultItemHeight
 
                 nextElementStart =
                     Dict.get index model.cumulativeHeights
