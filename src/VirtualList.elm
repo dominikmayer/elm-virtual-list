@@ -295,8 +295,39 @@ updateOnScroll model =
                 calculateDynamicBuffer model.baseBuffer scrollSpeed
             else
                 model.buffer
+
+        newModel =
+            stopScrollingIfTargetReached model
     in
-        ( { model | buffer = newBuffer }, measureViewport model.listId )
+        ( { newModel | buffer = newBuffer }, measureViewport model.listId )
+
+
+scrollTargetTolerance : Float
+scrollTargetTolerance =
+    20
+
+
+stopScrollingIfTargetReached : Model -> Model
+stopScrollingIfTargetReached model =
+    let
+        maybeTargetOffset =
+            model.pendingScroll
+                |> Maybe.andThen (\( targetId, _ ) -> findIndexForId model.ids targetId)
+                |> Maybe.map (computeElementStart model)
+
+        newModel =
+            case maybeTargetOffset of
+                Just targetOffset ->
+                    if abs (model.scrollTop - targetOffset) <= scrollTargetTolerance then
+                        -- Target reached: clear pending scroll.
+                        { model | pendingScroll = Nothing }
+                    else
+                        model
+
+                Nothing ->
+                    model
+    in
+        newModel
 
 
 maxBufferMultiplier : Int
