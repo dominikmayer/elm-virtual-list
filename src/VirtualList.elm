@@ -302,8 +302,8 @@ updateOnScroll model =
         ( { newModel | buffer = newBuffer }, measureViewport model.listId )
 
 
-scrollTargetTolerance : Float
-scrollTargetTolerance =
+scrollTargetToleranceInPixel : Float
+scrollTargetToleranceInPixel =
     20
 
 
@@ -318,7 +318,7 @@ stopScrollingIfTargetReached model =
         newModel =
             case maybeTargetOffset of
                 Just targetOffset ->
-                    if abs (model.scrollTop - targetOffset) <= scrollTargetTolerance then
+                    if abs (model.scrollTop - targetOffset) <= scrollTargetToleranceInPixel then
                         -- Target reached: clear pending scroll.
                         { model | pendingScroll = Nothing }
                     else
