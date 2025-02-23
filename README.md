@@ -76,3 +76,7 @@ renderRow : Model -> String -> Html Msg
 renderRow model id =
     div [] [text id]
 ```
+
+### Example
+
+Check out [Obsidian Note ID](https://github.com/dominikmayer/obsidian-note-id) for an example implementation.
