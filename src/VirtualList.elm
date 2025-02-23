@@ -166,7 +166,7 @@ type alias Model =
     , cumulativeHeights : Dict Int Float
     , scrollTop : Float
     , previousScrollTop : Float
-    , pendingScroll : Maybe ( String, Alignment )
+    , pendingScroll : Maybe PendingScroll
     }
 
 
@@ -309,25 +309,47 @@ scrollTargetToleranceInPixel =
 
 stopScrollingIfTargetReached : Model -> Model
 stopScrollingIfTargetReached model =
+    model.pendingScroll
+        |> Maybe.map (updatePendingScrollWithNewMeasurements model)
+        |> Maybe.andThen (processScrollIfTargetFound model)
+        |> Maybe.withDefault model
+
+
+processScrollIfTargetFound : Model -> PendingScroll -> Maybe Model
+processScrollIfTargetFound model updatedPending =
+    findIndexForId model.ids updatedPending.targetId
+        |> Maybe.map (\_ -> processScroll updatedPending model)
+
+
+processScroll : PendingScroll -> Model -> Model
+processScroll updatedPending model =
     let
-        maybeTargetOffset =
-            model.pendingScroll
-                |> Maybe.andThen (\( targetId, _ ) -> findIndexForId model.ids targetId)
-                |> Maybe.map (computeElementStart model)
+        newTargetOffset =
+            updatedPending.targetOffset
 
-        newModel =
-            case maybeTargetOffset of
-                Just targetOffset ->
-                    if abs (model.scrollTop - targetOffset) <= scrollTargetToleranceInPixel then
-                        -- Target reached: clear pending scroll.
-                        { model | pendingScroll = Nothing }
-                    else
-                        model
+        tolerance =
+            scrollTargetToleranceInPixel
 
-                Nothing ->
-                    model
+        lowerBound =
+            model.scrollTop
+
+        upperBound =
+            model.scrollTop + model.height
+
+        isVisible =
+            newTargetOffset >= lowerBound && newTargetOffset <= upperBound
+
+        isClose =
+            abs (model.scrollTop - newTargetOffset) <= tolerance
     in
-        newModel
+        if isVisible || isClose then
+            Debug.log "✅ Scrolling Done"
+                { scrollTop = model.scrollTop, targetOffset = newTargetOffset }
+                |> (\_ -> { model | pendingScroll = Nothing })
+        else
+            Debug.log "🔄 Still Scrolling"
+                { scrollTop = model.scrollTop, targetOffset = newTargetOffset }
+                |> (\_ -> { model | pendingScroll = Just updatedPending })
 
 
 maxBufferMultiplier : Int
@@ -636,6 +658,33 @@ type Alignment
     | Bottom
 
 
+type alias PendingScroll =
+    { targetId : String
+    , alignment : Alignment
+    , targetOffset : Float
+    }
+
+
+updatePendingScrollWithNewMeasurements : Model -> PendingScroll -> PendingScroll
+updatePendingScrollWithNewMeasurements model pending =
+    case findIndexForId model.ids pending.targetId of
+        Just index ->
+            let
+                newOffset =
+                    computeElementStart model index
+
+                delta =
+                    abs (newOffset - pending.targetOffset)
+            in
+                if delta > scrollTargetToleranceInPixel then
+                    { pending | targetOffset = newOffset }
+                else
+                    pending
+
+        Nothing ->
+            pending
+
+
 {-| Scrolls to the **specified item** in the virtual list.
 
 Does nothing if the item is **already visible.**
@@ -645,8 +694,19 @@ Does nothing if the item is **already visible.**
 scrollToItem : Model -> String -> Alignment -> ( Model, Cmd Msg )
 scrollToItem model id alignment =
     let
+        maybeIndex =
+            findIndexForId model.ids id
+
+        originalOffset =
+            case maybeIndex of
+                Just index ->
+                    computeElementStart model index
+
+                Nothing ->
+                    0
+
         newModel =
-            { model | pendingScroll = Just ( id, alignment ) }
+            { model | pendingScroll = Just { targetId = id, alignment = alignment, targetOffset = originalOffset } }
     in
         ( newModel, scrollCmdForTarget model id alignment )
 
@@ -654,7 +714,7 @@ scrollToItem model id alignment =
 maybePendingScrollCmd : Model -> Cmd Msg
 maybePendingScrollCmd model =
     case model.pendingScroll of
-        Just ( targetId, alignment ) ->
+        Just { targetId, alignment } ->
             scrollCmdForTarget model targetId alignment
 
         Nothing ->
