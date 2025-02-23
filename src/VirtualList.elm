@@ -449,18 +449,9 @@ mapRowHeight { oldIds, idsToRemeasure } currentRowHeights defaultItemHeight newI
         ( newIndex, newHeight )
 
 
-findIndex : (a -> Bool) -> List a -> Maybe Int
-findIndex predicate items =
-    items
-        |> List.indexedMap Tuple.pair
-        |> List.filter (\( _, item ) -> predicate item)
-        |> List.head
-        |> Maybe.map Tuple.first
-
-
 findIndexForId : List String -> String -> Maybe Int
 findIndexForId ids id =
-    findIndex (\listItem -> listItem == id) ids
+    List.Extra.findIndex ((==) id) ids
 
 
 calculateCumulativeHeights : Dict Int RowHeight -> Dict Int Float
