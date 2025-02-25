@@ -343,12 +343,10 @@ processScroll updatedPending model =
             abs (model.scrollTop - newTargetOffset) <= tolerance
     in
         if isVisible || isClose then
-            Debug.log "✅ Scrolling Done"
-                { scrollTop = model.scrollTop, targetOffset = newTargetOffset }
+            { scrollTop = model.scrollTop, targetOffset = newTargetOffset }
                 |> (\_ -> { model | pendingScroll = Nothing })
         else
-            Debug.log "🔄 Still Scrolling"
-                { scrollTop = model.scrollTop, targetOffset = newTargetOffset }
+            { scrollTop = model.scrollTop, targetOffset = newTargetOffset }
                 |> (\_ -> { model | pendingScroll = Just updatedPending })
 
 
