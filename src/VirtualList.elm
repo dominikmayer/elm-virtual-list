@@ -1,18 +1,9 @@
-module VirtualList
-    exposing
-        ( init
-        , initWithConfig
-        , defaultConfig
-        , update
-        , view
-        , setItems
-        , setItemsAndRemeasure
-        , setItemsAndRemeasureAll
-        , scrollToItem
-        , Model
-        , Msg
-        , Alignment(..)
-        )
+module VirtualList exposing
+    ( Model, defaultConfig, init, initWithConfig, Msg, update
+    , view
+    , setItems, setItemsAndRemeasureAll, setItemsAndRemeasure
+    , scrollToItem, Alignment(..)
+    )
 
 {-| Efficiently displays large lists by **only rendering the visible items** within the viewport, plus a configurable buffer.
 
@@ -20,7 +11,9 @@ It does so by **dynamically measuring** the height of the displayed elements.
 
 In case you **know the heights in advance** you might get a better performance by using [`FabienHenon/elm-infinite-list-view`](https://package.elm-lang.org/packages/FabienHenon/elm-infinite-list-view/latest/).
 
+
 ## Usage
+
 
 ### Model Setup
 
@@ -30,23 +23,27 @@ Include `VirtualList.Model` in your app's **model:**
 
     type alias Model =
         { virtualList : VirtualList.Model
+
         -- other fields
         }
 
     defaultModel : Model
     defaultModel =
         { virtualList = VirtualList.init
+
         -- other fields
         }
+
 
 ### Update Function
 
 Include `VirtualList.Msg` in your app’s **update function:**
 
+
     type Msg
         = VirtualListMsg VirtualList.Msg
-        -- other messages
 
+    -- other messages
     update : Msg -> Model -> ( Model, Cmd Msg )
     update msg model =
         case msg of
@@ -55,8 +52,10 @@ Include `VirtualList.Msg` in your app’s **update function:**
                     ( virtualListModel, virtualListCmd ) =
                         VirtualList.update virtualListMsg model.virtualList
                 in
-                    ( { model | virtualList = virtualListModel }, Cmd.map VirtualListMsg virtualListCmd )
-            -- other cases
+                ( { model | virtualList = virtualListModel }, Cmd.map VirtualListMsg virtualListCmd )
+
+    -- other cases
+
 
 ### Rendering
 
@@ -68,23 +67,28 @@ Render the virtual list in your **view:**
 
     renderRow : Model -> String -> Html Msg
     renderRow model id =
-        div [] [text id]
+        div [] [ text id ]
+
 
 # Model & Initialization
 
 @docs Model, defaultConfig, init, initWithConfig, Msg, update
 
+
 # Rendering
 
 @docs view
+
 
 # Updating the Items
 
 @docs setItems, setItemsAndRemeasureAll, setItemsAndRemeasure
 
+
 # Scrolling
 
 @docs scrollToItem, Alignment
+
 -}
 
 import Browser.Dom
@@ -111,23 +115,25 @@ type alias Config =
 
 {-| Provides a **default configuration** with sensible initial values.
 
-- **`listId`:** The ID of the list container in the DOM.
-- **`initialHeight`:** Estimated height of the list before it is measured.
-- **`defaultItemHeight`:** Default height assigned to items before they are measured.
-- **`showListDuringInitialMeasure`:** If `True`, the list is visible while measuring (potentially causing spacing issues).
-- **`buffer`:** Number of items rendered outside the visible range to ensure smooth scrolling.
-- **`dynamicBuffer`:** If `True`, increases buffer size when scrolling quickly.
+  - **`listId`:** The ID of the list container in the DOM.
+  - **`initialHeight`:** Estimated height of the list before it is measured.
+  - **`defaultItemHeight`:** Default height assigned to items before they are measured.
+  - **`showListDuringInitialMeasure`:** If `True`, the list is visible while measuring (potentially causing spacing issues).
+  - **`buffer`:** Number of items rendered outside the visible range to ensure smooth scrolling.
+  - **`dynamicBuffer`:** If `True`, increases buffer size when scrolling quickly.
 
+```
+defaultConfig : Config
+defaultConfig =
+    { listId = "virtual-list"
+    , initialHeight = 500
+    , defaultItemHeight = 26
+    , showListDuringInitialMeasure = False
+    , buffer = 5
+    , dynamicBuffer = True
+    }
+```
 
-    defaultConfig : Config
-    defaultConfig =
-        { listId = "virtual-list"
-        , initialHeight = 500
-        , defaultItemHeight = 26
-        , showListDuringInitialMeasure = False
-        , buffer = 5
-        , dynamicBuffer = True
-        }
 -}
 defaultConfig : Config
 defaultConfig =
@@ -144,10 +150,12 @@ defaultConfig =
 
     type alias Model =
         { virtualList : VirtualList.Model
+
         -- other fields
         }
 
 You **create** one with the `init` function.
+
 -}
 type alias Model =
     { listId : String
@@ -185,6 +193,7 @@ You can **modify** the default configuration:
 
     config =
         { defaultConfig | buffer = 10 }
+
 -}
 initWithConfig : Config -> Model
 initWithConfig options =
@@ -192,45 +201,49 @@ initWithConfig options =
         validListId =
             if String.isEmpty options.listId then
                 defaultConfig.listId
+
             else
                 options.listId
 
         validHeight =
             if options.initialHeight >= 0 then
                 options.initialHeight
+
             else
                 defaultConfig.initialHeight
 
         validBuffer =
             if options.buffer >= 0 then
                 options.buffer
+
             else
                 0
 
         validDefaultItemHeight =
             if options.defaultItemHeight >= 0 then
                 options.defaultItemHeight
+
             else
                 defaultConfig.defaultItemHeight
     in
-        { listId = validListId
-        , ids = []
-        , height = validHeight
-        , baseBuffer = validBuffer
-        , dynamicBuffer = options.dynamicBuffer
-        , buffer = validBuffer
-        , showListDuringInitialMeasure = options.showListDuringInitialMeasure
-        , showList = options.showListDuringInitialMeasure
-        , defaultItemHeight = validDefaultItemHeight
-        , visibleRange = ( 0, 20 )
-        , firstRender = True
-        , unmeasuredRows = Set.empty
-        , rowHeights = Dict.empty
-        , cumulativeHeights = Dict.empty
-        , scrollTop = 0
-        , previousScrollTop = 0
-        , pendingScroll = Nothing
-        }
+    { listId = validListId
+    , ids = []
+    , height = validHeight
+    , baseBuffer = validBuffer
+    , dynamicBuffer = options.dynamicBuffer
+    , buffer = validBuffer
+    , showListDuringInitialMeasure = options.showListDuringInitialMeasure
+    , showList = options.showListDuringInitialMeasure
+    , defaultItemHeight = validDefaultItemHeight
+    , visibleRange = ( 0, 20 )
+    , firstRender = True
+    , unmeasuredRows = Set.empty
+    , rowHeights = Dict.empty
+    , cumulativeHeights = Dict.empty
+    , scrollTop = 0
+    , previousScrollTop = 0
+    , pendingScroll = Nothing
+    }
 
 
 type RowHeight
@@ -242,9 +255,12 @@ type RowHeight
 
 You need to **include** `VirtualList.Msg` in your app’s `Msg` type and handle it in `update`.
 
+
     type Msg
-       = VirtualListMsg VirtualList.Msg
-       -- other messages
+        = VirtualListMsg VirtualList.Msg
+
+    -- other messages
+
 -}
 type Msg
     = NoOp
@@ -257,6 +273,7 @@ type Msg
 
 You must **integrate** this into your `update` function and map the result back to your own `Msg`.
 
+
     update : Msg -> Model -> ( Model, Cmd Msg )
     update msg model =
         case msg of
@@ -265,8 +282,10 @@ You must **integrate** this into your `update` function and map the result back 
                     ( virtualListModel, virtualListCmd ) =
                         VirtualList.update virtualListMsg model.virtualList
                 in
-                    ( { model | virtualList = virtualListModel }, Cmd.map VirtualListMsg virtualListCmd )
-            -- other cases
+                ( { model | virtualList = virtualListModel }, Cmd.map VirtualListMsg virtualListCmd )
+
+    -- other cases
+
 -}
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
@@ -293,13 +312,14 @@ updateOnScroll model =
         newBuffer =
             if model.dynamicBuffer then
                 calculateDynamicBuffer model.baseBuffer scrollSpeed
+
             else
                 model.buffer
 
         newModel =
             stopScrollingIfTargetReached model
     in
-        ( { newModel | buffer = newBuffer }, measureViewport model.listId )
+    ( { newModel | buffer = newBuffer }, measureViewport model.listId )
 
 
 scrollTargetToleranceInPixel : Float
@@ -342,12 +362,13 @@ processScroll updatedPending model =
         isClose =
             abs (model.scrollTop - newTargetOffset) <= tolerance
     in
-        if isVisible || isClose then
-            { scrollTop = model.scrollTop, targetOffset = newTargetOffset }
-                |> (\_ -> { model | pendingScroll = Nothing })
-        else
-            { scrollTop = model.scrollTop, targetOffset = newTargetOffset }
-                |> (\_ -> { model | pendingScroll = Just updatedPending })
+    if isVisible || isClose then
+        { scrollTop = model.scrollTop, targetOffset = newTargetOffset }
+            |> (\_ -> { model | pendingScroll = Nothing })
+
+    else
+        { scrollTop = model.scrollTop, targetOffset = newTargetOffset }
+            |> (\_ -> { model | pendingScroll = Just updatedPending })
 
 
 maxBufferMultiplier : Int
@@ -365,6 +386,7 @@ calculateDynamicBuffer base scrollSpeed =
 Only **new items** are considered for measurement; existing items retain their cached heights.
 
     VirtualList.setItems model.virtualList ids
+
 -}
 setItems : Model -> List String -> ( Model, Cmd Msg )
 setItems model newIds =
@@ -376,6 +398,7 @@ setItems model newIds =
 Use this when item heights may have **changed.**
 
     VirtualList.setItemsAndRemeasureAll model.virtualList newIds
+
 -}
 setItemsAndRemeasureAll : Model -> List String -> ( Model, Cmd Msg )
 setItemsAndRemeasureAll model newIds =
@@ -383,7 +406,7 @@ setItemsAndRemeasureAll model newIds =
         ( newModel, cmd ) =
             setItemsAndRemeasure model { newIds = newIds, idsToRemeasure = newIds }
     in
-        ( { newModel | showList = model.showListDuringInitialMeasure }, cmd )
+    ( { newModel | showList = model.showListDuringInitialMeasure }, cmd )
 
 
 {-| Same as `setItems`, but allows specifying which **items should be remeasured.**
@@ -391,6 +414,7 @@ setItemsAndRemeasureAll model newIds =
 This is useful when only a **subset of items** might have changed in height.
 
     VirtualList.setItemsAndRemeasure model.virtualList { newIds = newIds, idsToRemeasure = changedIds }
+
 -}
 setItemsAndRemeasure : Model -> { newIds : List String, idsToRemeasure : List String } -> ( Model, Cmd Msg )
 setItemsAndRemeasure model { newIds, idsToRemeasure } =
@@ -412,9 +436,9 @@ updateModelWithNewItems model ids updatedRowHeights =
 getRowHeightsFromCache :
     { oldIds : List String, newIds : List String, idsToRemeasure : List String }
     -> Dict Int RowHeight
-       -- currentRowHeights (keyed by the old index)
+    -- currentRowHeights (keyed by the old index)
     -> Float
-       -- defaultItemHeight
+    -- defaultItemHeight
     -> Dict Int RowHeight
 getRowHeightsFromCache ids currentRowHeights defaultItemHeight =
     ids.newIds
@@ -441,10 +465,11 @@ mapRowHeight { oldIds, idsToRemeasure } currentRowHeights defaultItemHeight newI
         newHeight =
             if List.member id idsToRemeasure then
                 Unmeasured (Maybe.withDefault defaultItemHeight (Maybe.map rowHeightToFloat existingHeight))
+
             else
                 Maybe.withDefault (Unmeasured defaultItemHeight) existingHeight
     in
-        ( newIndex, newHeight )
+    ( newIndex, newHeight )
 
 
 findIndexForId : List String -> String -> Maybe Int
@@ -467,7 +492,7 @@ insertCumulativeHeight index rowHeight ( cumulativeHeights, cumulative ) =
         cumulativeHeight =
             cumulative + height
     in
-        ( Dict.insert index cumulativeHeight cumulativeHeights, cumulativeHeight )
+    ( Dict.insert index cumulativeHeight cumulativeHeights, cumulativeHeight )
 
 
 rowHeightToFloat : RowHeight -> Float
@@ -506,7 +531,7 @@ calculateVisibleRange model scrollTop containerHeight =
         buffer =
             model.buffer
     in
-        ( (max 0 (start - buffer)), (min itemCount (end + buffer)) )
+    ( max 0 (start - buffer), min itemCount (end + buffer) )
 
 
 measureRow : Model -> Int -> Result Browser.Dom.Error Browser.Dom.Element -> ( Model, Cmd Msg )
@@ -544,9 +569,9 @@ updateRowHeightWithMeasurement model index element =
         newModel =
             checkAndReveal newModelPre
     in
-        ( newModel
-        , maybePendingScrollCmd newModel
-        )
+    ( newModel
+    , maybePendingScrollCmd newModel
+    )
 
 
 checkAndReveal : Model -> Model
@@ -561,10 +586,11 @@ checkAndReveal model =
         unmeasuredVisible =
             List.filter (\i -> isUnmeasured model.rowHeights i) visibleIndices
     in
-        if List.isEmpty unmeasuredVisible then
-            { model | showList = True }
-        else
-            model
+    if List.isEmpty unmeasuredVisible then
+        { model | showList = True }
+
+    else
+        model
 
 
 updateOnViewportChange : Model -> Result Browser.Dom.Error Browser.Dom.Viewport -> ( Model, Cmd Msg )
@@ -598,15 +624,15 @@ handleSuccessfulViewportUpdate model viewport =
                 |> List.map requestRowMeasurement
                 |> Cmd.batch
     in
-        ( { model
-            | height = newContainerHeight
-            , scrollTop = newScrollTop
-            , previousScrollTop = model.scrollTop
-            , visibleRange = visibleRange
-            , unmeasuredRows = Set.fromList unmeasuredIndices
-          }
-        , measureCmds
-        )
+    ( { model
+        | height = newContainerHeight
+        , scrollTop = newScrollTop
+        , previousScrollTop = model.scrollTop
+        , visibleRange = visibleRange
+        , unmeasuredRows = Set.fromList unmeasuredIndices
+      }
+    , measureCmds
+    )
 
 
 isUnmeasured : Dict comparable RowHeight -> comparable -> Bool
@@ -635,11 +661,13 @@ rowId index =
 
 {-| Defines where an item should **appear in the viewport** when scrolled to.
 
+
 ### Variants:
 
   - **`Top`:** Scrolls the item to the top.
   - **`Center`:** Scrolls the item to the center.
   - **`Bottom`:** Scrolls the item to the bottom.
+
 -}
 type Alignment
     = Top
@@ -665,10 +693,11 @@ updatePendingScrollWithNewMeasurements model pending =
                 delta =
                     abs (newOffset - pending.targetOffset)
             in
-                if delta > scrollTargetToleranceInPixel then
-                    { pending | targetOffset = newOffset }
-                else
-                    pending
+            if delta > scrollTargetToleranceInPixel then
+                { pending | targetOffset = newOffset }
+
+            else
+                pending
 
         Nothing ->
             pending
@@ -679,6 +708,7 @@ updatePendingScrollWithNewMeasurements model pending =
 Does nothing if the item is **already visible.**
 
     Cmd.map VirtualListMsg (VirtualList.scrollToItem model.virtualList "item-42" VirtualList.Center)
+
 -}
 scrollToItem : Model -> String -> Alignment -> ( Model, Cmd Msg )
 scrollToItem model id alignment =
@@ -697,7 +727,7 @@ scrollToItem model id alignment =
         newModel =
             { model | pendingScroll = Just { targetId = id, alignment = alignment, targetOffset = originalOffset } }
     in
-        ( newModel, scrollCmdForTarget model id alignment )
+    ( newModel, scrollCmdForTarget model id alignment )
 
 
 maybePendingScrollCmd : Model -> Cmd Msg
@@ -721,16 +751,17 @@ scrollCmdForTarget model targetId alignment =
                 scrollNeeded =
                     needsScrollCorrection model elementStart
             in
-                if scrollNeeded then
-                    scrollToPosition
-                        { targetId = model.listId
-                        , elementStart = elementStart
-                        , containerHeight = model.height
-                        , nextElementStart = Dict.get index model.cumulativeHeights
-                        , alignment = alignment
-                        }
-                else
-                    Cmd.none
+            if scrollNeeded then
+                scrollToPosition
+                    { targetId = model.listId
+                    , elementStart = elementStart
+                    , containerHeight = model.height
+                    , nextElementStart = Dict.get index model.cumulativeHeights
+                    , alignment = alignment
+                    }
+
+            else
+                Cmd.none
 
         Nothing ->
             Cmd.none
@@ -777,17 +808,17 @@ scrollToPosition position =
                 Bottom ->
                     nextElementStart - position.containerHeight
     in
-        Browser.Dom.setViewportOf position.targetId 0 finalPosition
-            |> Task.attempt (\_ -> NoOp)
+    Browser.Dom.setViewportOf position.targetId 0 finalPosition
+        |> Task.attempt (\_ -> NoOp)
 
 
 {-| **Renders** the virtual list.
 
 You **provide** it with
 
-- **function** that renders an item given its ID,
-- the virtual list **`Model`** and
-- the virtual list **message** type on your side.
+  - **function** that renders an item given its ID,
+  - the virtual list **`Model`** and
+  - the virtual list **message** type on your side.
 
 In **your code** this would look like this:
 
@@ -797,9 +828,10 @@ In **your code** this would look like this:
 
     renderRow : Model -> String -> Html Msg
     renderRow model id =
-        div [] [text id]
+        div [] [ text id ]
 
 `renderRow` is executed **lazily.**
+
 -}
 view : (String -> Html msg) -> Model -> (Msg -> msg) -> Html msg
 view renderRow model toSelf =
@@ -820,29 +852,32 @@ view renderRow model toSelf =
                         globalIndex =
                             start + localIndex
                     in
-                        renderRow id
-                            |> renderLazyVirtualRow globalIndex model.cumulativeHeights
+                    renderRow id
+                        |> renderLazyVirtualRow globalIndex model.cumulativeHeights
                 )
                 visibleItems
     in
-        div
-            (listAttributes model.showList model.listId toSelf)
-            [ renderSpacer height rows ]
+    div
+        (listAttributes model.showList model.listId toSelf)
+        [ renderSpacer height rows ]
 
 
 listAttributes : Bool -> String -> (Msg -> msg) -> List (Html.Attribute msg)
 listAttributes showList listId toSelf =
     [ Html.Attributes.class "virtual-list"
     , Html.Attributes.id listId
-      -- Height needs to be in the element for fast measurement
+
+    -- Height needs to be in the element for fast measurement
     , Html.Attributes.style "height" "100%"
     , Html.Attributes.style "overflow" "auto"
     , onScroll (toSelf Scrolled)
     ]
-        ++ if not showList then
-            [ Html.Attributes.style "visibility" "hidden" ]
-           else
-            []
+        ++ (if not showList then
+                [ Html.Attributes.style "visibility" "hidden" ]
+
+            else
+                []
+           )
 
 
 totalHeight : Dict Int Float -> Float
@@ -851,12 +886,12 @@ totalHeight cumulativeHeights =
         lastItemIndex =
             Dict.size cumulativeHeights - 1
     in
-        case Dict.get lastItemIndex cumulativeHeights of
-            Just height ->
-                height
+    case Dict.get lastItemIndex cumulativeHeights of
+        Just height ->
+            height
 
-            Nothing ->
-                0
+        Nothing ->
+            0
 
 
 renderSpacer : String -> List (Html msg) -> Html msg
@@ -877,7 +912,7 @@ renderLazyVirtualRow index cumulativeHeights renderRow =
         id =
             rowId index
     in
-        lazy2 (renderVirtualRow renderRow) id top
+    lazy2 (renderVirtualRow renderRow) id top
 
 
 renderVirtualRow : Html msg -> String -> Float -> Html msg
