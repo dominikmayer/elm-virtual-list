@@ -707,7 +707,13 @@ updatePendingScrollWithNewMeasurements model pending =
 
 Does nothing if the item is **already visible.**
 
-    Cmd.map VirtualListMsg (VirtualList.scrollToItem model.virtualList "item-42" VirtualList.Center)
+    let
+        ( newVirtualList, virtualListCmd ) =
+            VirtualList.scrollToItem model.virtualList "item-42" VirtualList.Center
+    in
+    ( { model | virtualList = newVirtualList }
+    , Cmd.map VirtualListMsg virtualListCmd
+    )
 
 -}
 scrollToItem : Model -> String -> Alignment -> ( Model, Cmd Msg )
