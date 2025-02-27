@@ -554,18 +554,11 @@ measureRow : Model -> Int -> Result Browser.Dom.Error Browser.Dom.Element -> ( M
 measureRow model index result =
     case result of
         Ok element ->
-            let
-                _ =
-                    Debug.log "row measured"
-            in
             updateRowHeightWithMeasurement model index element
 
         Err error ->
             let
-                _ =
-                    Debug.log "Failed to measure row" ( error, model.pendingScroll )
-
-                extraCmd =
+                cmd =
                     case ( error, model.pendingScroll ) of
                         ( Browser.Dom.NotFound _, Pending pending ) ->
                             -- Retry scrolling to the target so it becomes visible and measurable.
@@ -574,7 +567,7 @@ measureRow model index result =
                         _ ->
                             Cmd.none
             in
-            ( model, extraCmd )
+            ( model, cmd )
 
 
 updateRowHeightWithMeasurement : Model -> Int -> Browser.Dom.Element -> ( Model, Cmd Msg )
@@ -599,9 +592,6 @@ updateRowHeightWithMeasurement model index element =
                 , rowHeights = updatedRowHeights
             }
                 |> checkAndReveal
-
-        _ =
-            Debug.log "Measurement complete for index" ( index, height, newModel.pendingScroll )
     in
     ( newModel
     , maybePendingScrollCmd newModel
@@ -760,87 +750,93 @@ scrollToItem : Model -> String -> Alignment -> ( Model, Cmd Msg )
 scrollToItem model id alignment =
     case findIndexForId model.ids id of
         Just index ->
-            let
-                isRowMeasured =
-                    case Dict.get index model.rowHeights of
-                        Just (Measured _) ->
-                            True
-
-                        _ ->
-                            False
-
-                -- If the row is measured, compute its offset; otherwise use a default.
-                computedOffset =
-                    if isRowMeasured then
-                        computeElementStart model index
-
-                    else
-                        model.defaultItemHeight * toFloat index
-
-                newModel =
-                    { model
-                        | pendingScroll =
-                            Pending
-                                { targetId = id
-                                , alignment = alignment
-                                , targetOffset = computedOffset
-                                }
-                    }
-
-                measurementCmd =
-                    if not isRowMeasured then
-                        -- Force a measurement for the target row
-                        requestRowMeasurement index
-
-                    else
-                        Cmd.none
-
-                scrollCmd =
-                    if Debug.log "isMeasured, will scroll" isRowMeasured then
-                        -- Only issue the scroll if we already have a measurement.
-                        scrollCmdForTarget newModel id alignment
-
-                    else
-                        Cmd.none
-            in
-            let
-                _ =
-                    Debug.log "scrollToItem" always
-            in
-            ( newModel, Cmd.batch [ measurementCmd, scrollCmd ] )
+            scrollToKnownItem model id alignment index
 
         Nothing ->
-            let
-                _ =
-                    Debug.log "no index found" always
-            in
             recheckScroll model id alignment
+
+
+scrollToKnownItem : Model -> String -> Alignment -> Int -> ( Model, Cmd Msg )
+scrollToKnownItem model id alignment index =
+    let
+        rowIsMeasured =
+            isRowMeasured index model.rowHeights
+
+        computedOffset =
+            computeElementOffset model index
+
+        newModel =
+            { model
+                | pendingScroll =
+                    Pending
+                        { targetId = id
+                        , alignment = alignment
+                        , targetOffset = computedOffset
+                        }
+            }
+
+        cmd =
+            if rowIsMeasured then
+                scrollCmdForTarget newModel id alignment
+
+            else
+                requestRowMeasurement index
+    in
+    ( newModel, cmd )
+
+
+isRowMeasured : comparable -> Dict comparable RowHeight -> Bool
+isRowMeasured index heights =
+    case Dict.get index heights of
+        Just (Measured _) ->
+            True
+
+        _ ->
+            False
+
+
+computeElementOffset : Model -> Int -> Float
+computeElementOffset model index =
+    if isRowMeasured index model.rowHeights then
+        computeElementStart model index
+
+    else
+        model.defaultItemHeight * toFloat index
 
 
 recheckScroll : Model -> String -> Alignment -> ( Model, Cmd Msg )
 recheckScroll model id alignment =
     case model.pendingScroll of
         Attempting attempts ->
-            if attempts < maxRecheckAttempts then
-                let
-                    newAttempts =
-                        attempts + 1
-
-                    newModel =
-                        { model | pendingScroll = Attempting newAttempts }
-                in
-                ( newModel, Task.perform (\_ -> RecheckScroll id alignment) (Process.sleep 100) )
-
-            else
-                -- Maximum attempts reached; clear pending scroll.
-                ( { model | pendingScroll = NoScroll }, Cmd.none )
+            checkAttemptsAndPerformScrollRecheck model attempts id alignment
 
         Pending _ ->
             ( model, Cmd.none )
 
         NoScroll ->
-            -- If there's no pending scroll at all, try scheduling one last time.
-            ( model, Task.perform (\_ -> RecheckScroll id alignment) (Process.sleep 100) )
+            checkAttemptsAndPerformScrollRecheck model 0 id alignment
+
+
+checkAttemptsAndPerformScrollRecheck : Model -> Int -> String -> Alignment -> ( Model, Cmd Msg )
+checkAttemptsAndPerformScrollRecheck model attempts id alignment =
+    if attempts < maxRecheckAttempts then
+        let
+            newAttempts =
+                attempts + 1
+
+            newModel =
+                { model | pendingScroll = Attempting newAttempts }
+        in
+        ( newModel, performScrollRecheck id alignment )
+
+    else
+        -- Maximum attempts reached; clear pending scroll.
+        ( { model | pendingScroll = NoScroll }, Cmd.none )
+
+
+performScrollRecheck : String -> Alignment -> Cmd Msg
+performScrollRecheck id alignment =
+    Task.perform (\_ -> RecheckScroll id alignment) (Process.sleep 100)
 
 
 maxRecheckAttempts : Int
