@@ -98,7 +98,9 @@ import Html.Attributes
 import Html.Events exposing (on)
 import Html.Lazy exposing (lazy2)
 import Json.Decode as Decode
+import List exposing (all)
 import List.Extra
+import Process
 import Set exposing (Set)
 import Task
 
@@ -174,7 +176,7 @@ type alias Model =
     , cumulativeHeights : Dict Int Float
     , scrollTop : Float
     , previousScrollTop : Float
-    , pendingScroll : Maybe PendingScroll
+    , pendingScroll : PendingScroll
     }
 
 
@@ -242,7 +244,7 @@ initWithConfig options =
     , cumulativeHeights = Dict.empty
     , scrollTop = 0
     , previousScrollTop = 0
-    , pendingScroll = Nothing
+    , pendingScroll = NoScroll
     }
 
 
@@ -264,6 +266,7 @@ You need to **include** `VirtualList.Msg` in your app’s `Msg` type and handle 
 -}
 type Msg
     = NoOp
+    | RecheckScroll String Alignment
     | RowElementReceived Int (Result Browser.Dom.Error Browser.Dom.Element)
     | Scrolled
     | ViewportUpdated (Result Browser.Dom.Error Browser.Dom.Viewport)
@@ -293,6 +296,9 @@ update msg model =
         NoOp ->
             ( model, Cmd.none )
 
+        RecheckScroll id alignment ->
+            scrollToItem model id alignment
+
         RowElementReceived index result ->
             measureRow model index result
 
@@ -310,7 +316,7 @@ updateOnScroll model =
             abs (model.scrollTop - model.previousScrollTop)
 
         newBuffer =
-            if model.dynamicBuffer then
+            if model.dynamicBuffer && model.pendingScroll == NoScroll then
                 calculateDynamicBuffer model.baseBuffer scrollSpeed
 
             else
@@ -329,19 +335,26 @@ scrollTargetToleranceInPixel =
 
 stopScrollingIfTargetReached : Model -> Model
 stopScrollingIfTargetReached model =
-    model.pendingScroll
-        |> Maybe.map (updatePendingScrollWithNewMeasurements model)
-        |> Maybe.andThen (processScrollIfTargetFound model)
-        |> Maybe.withDefault model
+    case model.pendingScroll of
+        Pending pending ->
+            let
+                updatedPending =
+                    updatePendingScrollWithNewMeasurements model pending
+            in
+            processScrollIfTargetFound model updatedPending
+                |> Maybe.withDefault { model | pendingScroll = Pending updatedPending }
+
+        _ ->
+            model
 
 
-processScrollIfTargetFound : Model -> PendingScroll -> Maybe Model
+processScrollIfTargetFound : Model -> PendingScrollState -> Maybe Model
 processScrollIfTargetFound model updatedPending =
     findIndexForId model.ids updatedPending.targetId
         |> Maybe.map (\_ -> processScroll updatedPending model)
 
 
-processScroll : PendingScroll -> Model -> Model
+processScroll : PendingScrollState -> Model -> Model
 processScroll updatedPending model =
     let
         newTargetOffset =
@@ -361,14 +374,17 @@ processScroll updatedPending model =
 
         isClose =
             abs (model.scrollTop - newTargetOffset) <= tolerance
+
+        log =
+            { scrollTop = model.scrollTop, targetOffset = newTargetOffset, upperBound = upperBound, height = model.height, isClose = isClose, isVisible = isVisible }
     in
     if isVisible || isClose then
-        { scrollTop = model.scrollTop, targetOffset = newTargetOffset }
-            |> (\_ -> { model | pendingScroll = Nothing })
+        Debug.log "✅ Scrolling Done" log
+            |> (\_ -> { model | pendingScroll = NoScroll })
 
     else
-        { scrollTop = model.scrollTop, targetOffset = newTargetOffset }
-            |> (\_ -> { model | pendingScroll = Just updatedPending })
+        Debug.log "🔄 Still Scrolling" log
+            |> (\_ -> { model | pendingScroll = Pending updatedPending })
 
 
 maxBufferMultiplier : Int
@@ -538,10 +554,27 @@ measureRow : Model -> Int -> Result Browser.Dom.Error Browser.Dom.Element -> ( M
 measureRow model index result =
     case result of
         Ok element ->
+            let
+                _ =
+                    Debug.log "row measured"
+            in
             updateRowHeightWithMeasurement model index element
 
-        Err _ ->
-            ( model, Cmd.none )
+        Err error ->
+            let
+                _ =
+                    Debug.log "Failed to measure row" ( error, model.pendingScroll )
+
+                extraCmd =
+                    case ( error, model.pendingScroll ) of
+                        ( Browser.Dom.NotFound _, Pending pending ) ->
+                            -- Retry scrolling to the target so it becomes visible and measurable.
+                            scrollCmdForTarget model (Debug.log "extra command" pending.targetId) pending.alignment
+
+                        _ ->
+                            Cmd.none
+            in
+            ( model, extraCmd )
 
 
 updateRowHeightWithMeasurement : Model -> Int -> Browser.Dom.Element -> ( Model, Cmd Msg )
@@ -559,15 +592,16 @@ updateRowHeightWithMeasurement model index element =
         remainingUnmeasured =
             Set.remove index model.unmeasuredRows
 
-        newModelPre =
+        newModel =
             { model
                 | unmeasuredRows = remainingUnmeasured
                 , cumulativeHeights = updatedCumulativeHeights
                 , rowHeights = updatedRowHeights
             }
+                |> checkAndReveal
 
-        newModel =
-            checkAndReveal newModelPre
+        _ =
+            Debug.log "Measurement complete for index" ( index, height, newModel.pendingScroll )
     in
     ( newModel
     , maybePendingScrollCmd newModel
@@ -675,14 +709,20 @@ type Alignment
     | Bottom
 
 
-type alias PendingScroll =
+type PendingScroll
+    = NoScroll
+    | Pending PendingScrollState
+    | Attempting Int
+
+
+type alias PendingScrollState =
     { targetId : String
     , alignment : Alignment
     , targetOffset : Float
     }
 
 
-updatePendingScrollWithNewMeasurements : Model -> PendingScroll -> PendingScroll
+updatePendingScrollWithNewMeasurements : Model -> PendingScrollState -> PendingScrollState
 updatePendingScrollWithNewMeasurements model pending =
     case findIndexForId model.ids pending.targetId of
         Just index ->
@@ -718,31 +758,106 @@ Does nothing if the item is **already visible.**
 -}
 scrollToItem : Model -> String -> Alignment -> ( Model, Cmd Msg )
 scrollToItem model id alignment =
-    let
-        maybeIndex =
-            findIndexForId model.ids id
+    case findIndexForId model.ids id of
+        Just index ->
+            let
+                isRowMeasured =
+                    case Dict.get index model.rowHeights of
+                        Just (Measured _) ->
+                            True
 
-        originalOffset =
-            case maybeIndex of
-                Just index ->
-                    computeElementStart model index
+                        _ ->
+                            False
 
-                Nothing ->
-                    0
+                -- If the row is measured, compute its offset; otherwise use a default.
+                computedOffset =
+                    if isRowMeasured then
+                        computeElementStart model index
 
-        newModel =
-            { model | pendingScroll = Just { targetId = id, alignment = alignment, targetOffset = originalOffset } }
-    in
-    ( newModel, scrollCmdForTarget model id alignment )
+                    else
+                        model.defaultItemHeight * toFloat index
+
+                newModel =
+                    { model
+                        | pendingScroll =
+                            Pending
+                                { targetId = id
+                                , alignment = alignment
+                                , targetOffset = computedOffset
+                                }
+                    }
+
+                measurementCmd =
+                    if not isRowMeasured then
+                        -- Force a measurement for the target row
+                        requestRowMeasurement index
+
+                    else
+                        Cmd.none
+
+                scrollCmd =
+                    if Debug.log "isMeasured, will scroll" isRowMeasured then
+                        -- Only issue the scroll if we already have a measurement.
+                        scrollCmdForTarget newModel id alignment
+
+                    else
+                        Cmd.none
+            in
+            let
+                _ =
+                    Debug.log "scrollToItem" always
+            in
+            ( newModel, Cmd.batch [ measurementCmd, scrollCmd ] )
+
+        Nothing ->
+            let
+                _ =
+                    Debug.log "no index found" always
+            in
+            recheckScroll model id alignment
+
+
+recheckScroll : Model -> String -> Alignment -> ( Model, Cmd Msg )
+recheckScroll model id alignment =
+    case model.pendingScroll of
+        Attempting attempts ->
+            if attempts < maxRecheckAttempts then
+                let
+                    newAttempts =
+                        attempts + 1
+
+                    newModel =
+                        { model | pendingScroll = Attempting newAttempts }
+                in
+                ( newModel, Task.perform (\_ -> RecheckScroll id alignment) (Process.sleep 100) )
+
+            else
+                -- Maximum attempts reached; clear pending scroll.
+                ( { model | pendingScroll = NoScroll }, Cmd.none )
+
+        Pending _ ->
+            ( model, Cmd.none )
+
+        NoScroll ->
+            -- If there's no pending scroll at all, try scheduling one last time.
+            ( model, Task.perform (\_ -> RecheckScroll id alignment) (Process.sleep 100) )
+
+
+maxRecheckAttempts : Int
+maxRecheckAttempts =
+    1
 
 
 maybePendingScrollCmd : Model -> Cmd Msg
 maybePendingScrollCmd model =
     case model.pendingScroll of
-        Just { targetId, alignment } ->
+        Pending { targetId, alignment } ->
             scrollCmdForTarget model targetId alignment
 
-        Nothing ->
+        NoScroll ->
+            Cmd.none
+
+        Attempting _ ->
             Cmd.none
 
 
