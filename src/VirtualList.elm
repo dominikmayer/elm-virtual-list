@@ -730,6 +730,11 @@ isUnmeasured rowHeights index =
             True
 
 
+hideListAndRequestRowMeasurement : Model -> Int -> ( Model, Cmd Msg )
+hideListAndRequestRowMeasurement model index =
+    ( { model | showList = model.showListDuringMeasurement }, requestRowMeasurement index )
+
+
 requestRowMeasurement : Int -> Cmd Msg
 requestRowMeasurement index =
     Browser.Dom.getElement (rowId index)
@@ -802,20 +807,16 @@ Does nothing if the item is **already visible.**
 -}
 scrollToItem : Model -> String -> Alignment -> ( Model, Cmd Msg )
 scrollToItem model id alignment =
-    let
-        newModel =
-            { model | showList = model.showListDuringMeasurement }
-    in
-    case findIndexForId newModel.ids id of
+    case findIndexForId model.ids id of
         Just index ->
-            startScrollingToKnownItem newModel alignment (Debug.log "scrollToItem, found" index)
+            startScrollingToKnownItem model alignment (Debug.log "scrollToItem, found" index)
 
         Nothing ->
             let
                 _ =
                     Debug.log "scrollToItem, not found" id
             in
-            startScrollInNextUpdateCycle newModel id alignment
+            startScrollInNextUpdateCycle model id alignment
 
 
 startScrollingToKnownItem : Model -> Alignment -> Int -> ( Model, Cmd Msg )
@@ -848,17 +849,17 @@ scrollToKnownItem model scrollState =
         newScrollState =
             { scrollState | targetOffset = computedOffset }
 
-        newModel =
+        newModelPre =
             { model
                 | scrollState = InProgress newScrollState
             }
 
-        cmd =
+        ( newModel, cmd ) =
             if Debug.log "rowIsMeasured" rowIsMeasured then
-                scrollCmdForKnownTarget newModel newScrollState.targetIndex newScrollState.alignment
+                ( newModelPre, scrollCmdForKnownTarget newModelPre newScrollState.targetIndex newScrollState.alignment )
 
             else
-                requestRowMeasurement scrollState.targetIndex
+                hideListAndRequestRowMeasurement newModelPre scrollState.targetIndex
     in
     ( newModel, cmd )
 
@@ -965,16 +966,6 @@ scrollCmdForKnownTarget model index alignment =
 
     else
         Task.perform (\_ -> Scrolled) (Process.sleep 0)
-
-
-
--- scrollCmdForTarget : Model -> String -> Alignment -> Cmd Msg
--- scrollCmdForTarget model targetId alignment =
---     case findIndexForId model.ids targetId of
---         Just index ->
---             scrollCmdForKnownTarget model index alignment
---         Nothing ->
---             Task.perform (\_ -> Scrolled) (Process.sleep 0)
 
 
 computeElementStart : Model -> Int -> Float
