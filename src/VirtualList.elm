@@ -105,6 +105,35 @@ import Set exposing (Set)
 import Task
 
 
+
+-- CONSTANTS
+
+
+maxBufferMultiplier : Int
+maxBufferMultiplier =
+    4
+
+
+maxScrollRecheckAttempts : Int
+maxScrollRecheckAttempts =
+    1
+
+
+maxScrollRetries : Int
+maxScrollRetries =
+    10
+
+
+scrollStabilityThreshold : Int
+scrollStabilityThreshold =
+    2
+
+
+scrollTargetToleranceInPixel : Float
+scrollTargetToleranceInPixel =
+    20
+
+
 showDebugLogs : Bool
 showDebugLogs =
     True
@@ -355,18 +384,13 @@ updateBufferMeasureViewportAndContinueScroll model =
     )
 
 
-scrollTargetToleranceInPixel : Float
-scrollTargetToleranceInPixel =
-    20
-
-
 continueScrollToTarget : Model -> ( Model, Cmd Msg )
 continueScrollToTarget model =
     case model.scrollState of
         InProgress scrollState ->
             let
                 updatedScrollState =
-                    updatePendingScrollWithNewMeasurements model scrollState
+                    updateScrollStateWithNewMeasurements model scrollState
             in
             processScroll model updatedScrollState
 
@@ -426,7 +450,7 @@ processScroll model scrollState =
             Task.perform (\_ -> Scrolled) (Process.sleep 50)
     in
     if isVisible || isClose then
-        if scrollState.stableCount > 2 then
+        if scrollState.stableCount > scrollStabilityThreshold then
             log "✅ Scrolling Done" logMessage
                 |> (\_ -> ( { model | scrollState = NoScroll, listIsVisible = True }, cmd ))
 
@@ -455,16 +479,6 @@ processScroll model scrollState =
     else
         log "🛑 Max retries reached, stopping scroll attempt." logMessage
             |> (\_ -> ( { model | scrollState = NoScroll, listIsVisible = True }, Cmd.none ))
-
-
-maxScrollRetries : Int
-maxScrollRetries =
-    10
-
-
-maxBufferMultiplier : Int
-maxBufferMultiplier =
-    4
 
 
 calculateDynamicBuffer : Int -> Float -> Int
@@ -796,20 +810,20 @@ type alias InProgressScrollState =
     }
 
 
-updatePendingScrollWithNewMeasurements : Model -> InProgressScrollState -> InProgressScrollState
-updatePendingScrollWithNewMeasurements model pending =
+updateScrollStateWithNewMeasurements : Model -> InProgressScrollState -> InProgressScrollState
+updateScrollStateWithNewMeasurements model scrollState =
     let
         newOffset =
-            computeElementStart model pending.targetIndex
+            computeElementStart model scrollState.targetIndex
 
         delta =
-            abs (newOffset - pending.targetOffset)
+            abs (newOffset - scrollState.targetOffset)
     in
     if delta > scrollTargetToleranceInPixel then
-        { pending | targetOffset = newOffset }
+        { scrollState | targetOffset = newOffset }
 
     else
-        pending
+        scrollState
 
 
 {-| Scrolls to the **specified item** in the virtual list.
@@ -899,7 +913,7 @@ startScrollInNextUpdateCycle model id alignment =
 
 increaseAttemptsAndAttemptScrollInNextUpdateCycle : Model -> String -> Alignment -> Int -> ( Model, Cmd Msg )
 increaseAttemptsAndAttemptScrollInNextUpdateCycle model id alignment attempts =
-    if attempts < maxRecheckAttempts then
+    if attempts < maxScrollRecheckAttempts then
         let
             newAttempts =
                 attempts + 1
@@ -917,11 +931,6 @@ increaseAttemptsAndAttemptScrollInNextUpdateCycle model id alignment attempts =
 startScrollingInNextUpdateCycle : String -> Alignment -> Cmd Msg
 startScrollingInNextUpdateCycle id alignment =
     Task.perform (\_ -> ScrollStartRequested id alignment) (Process.sleep 100)
-
-
-maxRecheckAttempts : Int
-maxRecheckAttempts =
-    1
 
 
 maybePendingScrollCmd : Model -> Cmd Msg
