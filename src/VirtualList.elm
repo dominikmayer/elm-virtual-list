@@ -136,7 +136,7 @@ scrollTargetToleranceInPixel =
 
 showDebugLogs : Bool
 showDebugLogs =
-    True
+    False
 
 
 log : String -> a -> a
