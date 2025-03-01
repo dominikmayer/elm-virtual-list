@@ -105,6 +105,20 @@ import Set exposing (Set)
 import Task
 
 
+showDebugLogs : Bool
+showDebugLogs =
+    False
+
+
+log : String -> a -> a
+log msg value =
+    if showDebugLogs then
+        Debug.log msg value
+
+    else
+        value
+
+
 type alias Config =
     { listId : String
     , initialHeight : Float
@@ -303,7 +317,7 @@ update msg model =
         ScrollStartRequested id alignment ->
             let
                 _ =
-                    Debug.log "ScrollStartRequested" id
+                    log "ScrollStartRequested" id
             in
             scrollToItem model id alignment
 
@@ -392,7 +406,7 @@ processScroll model scrollState =
         stillTooFar =
             not isVisible && scrollOffset > 1.5 * scrollTargetToleranceInPixel
 
-        log =
+        logMessage =
             { scrollTop = model.scrollTop
             , targetOffset = newTargetOffset
             , upperBound = upperBound
@@ -407,11 +421,11 @@ processScroll model scrollState =
     in
     if isVisible || isClose then
         if scrollState.stableCount > 2 then
-            Debug.log "✅ Scrolling Done" log
+            log "✅ Scrolling Done" logMessage
                 |> (\_ -> ( { model | scrollState = NoScroll, showList = True }, cmd ))
 
         else
-            Debug.log "❓ Scrolling Might Be Done" log
+            log "❓ Scrolling Might Be Done" logMessage
                 |> (\_ ->
                         ( { model
                             | scrollState =
@@ -425,7 +439,7 @@ processScroll model scrollState =
                    )
 
     else if shouldRetry && stillTooFar then
-        Debug.log "🔄 Still Scrolling - Retrying Scroll" log
+        log "🔄 Still Scrolling - Retrying Scroll" logMessage
             |> (\_ ->
                     ( model
                     , cmd
@@ -433,7 +447,7 @@ processScroll model scrollState =
                )
 
     else
-        Debug.log "🛑 Max retries reached, stopping scroll attempt." log
+        log "🛑 Max retries reached, stopping scroll attempt." logMessage
             |> (\_ -> ( { model | scrollState = NoScroll, showList = True }, Cmd.none ))
 
 
@@ -477,7 +491,7 @@ setItemsAndRemeasureAll model newIds =
         ( newModel, cmd ) =
             setItemsAndRemeasure model { newIds = newIds, idsToRemeasure = newIds }
     in
-    ( { newModel | showList = Debug.log "showing list from setItemsAndRemeasureAll" model.showListDuringMeasurement }, cmd )
+    ( { newModel | showList = log "showing list from setItemsAndRemeasureAll" model.showListDuringMeasurement }, cmd )
 
 
 {-| Same as `setItems`, but allows specifying which **items should be remeasured.**
@@ -617,7 +631,7 @@ handleMeasurementResultAndScroll model index result =
                     case ( error, model.scrollState ) of
                         ( Browser.Dom.NotFound _, InProgress pending ) ->
                             -- Retry scrolling to the target so it becomes visible and measurable.
-                            scrollCmdForKnownTarget model (Debug.log "measureRowAndScroll, scrolling to index" index) pending.alignment
+                            scrollCmdForKnownTarget model (log "measureRowAndScroll, scrolling to index" index) pending.alignment
 
                         _ ->
                             Cmd.none
@@ -666,7 +680,7 @@ checkAndReveal model =
             List.filter (\i -> isUnmeasured model.rowHeights i) visibleIndices
 
         _ =
-            Debug.log "checkAndReveal" model.scrollState
+            log "checkAndReveal" model.scrollState
     in
     if List.isEmpty unmeasuredVisible && model.scrollState == NoScroll then
         { model | showList = True }
@@ -809,12 +823,12 @@ scrollToItem : Model -> String -> Alignment -> ( Model, Cmd Msg )
 scrollToItem model id alignment =
     case findIndexForId model.ids id of
         Just index ->
-            startScrollingToKnownItem model alignment (Debug.log "scrollToItem, found" index)
+            startScrollingToKnownItem model alignment (log "scrollToItem, found" index)
 
         Nothing ->
             let
                 _ =
-                    Debug.log "scrollToItem, not found" id
+                    log "scrollToItem, not found" id
             in
             startScrollInNextUpdateCycle model id alignment
 
@@ -855,7 +869,7 @@ scrollToKnownItem model scrollState =
             }
 
         ( newModel, cmd ) =
-            if Debug.log "rowIsMeasured" rowIsMeasured then
+            if log "rowIsMeasured" rowIsMeasured then
                 ( newModelPre, scrollCmdForKnownTarget newModelPre newScrollState.targetIndex newScrollState.alignment )
 
             else
@@ -885,7 +899,7 @@ computeElementOffset model index =
 
 startScrollInNextUpdateCycle : Model -> String -> Alignment -> ( Model, Cmd Msg )
 startScrollInNextUpdateCycle model id alignment =
-    case Debug.log "recheckScroll" model.scrollState of
+    case log "recheckScroll" model.scrollState of
         SearchingForItem attempts ->
             increaseAttemptsAndAttemptScrollInNextUpdateCycle model id alignment attempts
 
@@ -928,7 +942,7 @@ maybePendingScrollCmd model =
     case model.scrollState of
         InProgress { targetIndex, alignment } ->
             if Set.isEmpty model.unmeasuredRows then
-                scrollCmdForKnownTarget model (Debug.log "maybePendingScrollCmd" targetIndex) alignment
+                scrollCmdForKnownTarget model (log "maybePendingScrollCmd" targetIndex) alignment
 
             else
                 Cmd.none
@@ -950,7 +964,7 @@ scrollCmdForKnownTarget model index alignment =
             needsScrollCorrection model elementStart
 
         _ =
-            Debug.log "scrollCmdForKnownTarget"
+            log "scrollCmdForKnownTarget"
                 { index = index
                 , scrollNeeded = scrollNeeded
                 }
