@@ -98,7 +98,7 @@ import Html.Attributes
 import Html.Events exposing (on)
 import Html.Lazy exposing (lazy2)
 import Json.Decode as Decode
-import List exposing (all)
+import List
 import List.Extra
 import Process
 import Set exposing (Set)
@@ -363,15 +363,8 @@ update msg model =
 updateBufferMeasureViewportAndContinueScroll : Model -> ( Model, Cmd Msg )
 updateBufferMeasureViewportAndContinueScroll model =
     let
-        scrollSpeed =
-            abs (model.scrollTop - model.previousScrollTop)
-
         newBuffer =
-            if model.dynamicBuffer && model.scrollState == NoScroll then
-                calculateDynamicBuffer model.baseBuffer scrollSpeed
-
-            else
-                model.currentBuffer
+            updateBuffer model
 
         ( newModel, scrollCmd ) =
             continueScrollToTarget model
@@ -382,6 +375,19 @@ updateBufferMeasureViewportAndContinueScroll model =
         , scrollCmd
         ]
     )
+
+
+updateBuffer : Model -> Int
+updateBuffer model =
+    let
+        scrollSpeed =
+            abs (model.scrollTop - model.previousScrollTop)
+    in
+    if model.dynamicBuffer && model.scrollState == NoScroll then
+        calculateDynamicBuffer model.baseBuffer scrollSpeed
+
+    else
+        model.currentBuffer
 
 
 continueScrollToTarget : Model -> ( Model, Cmd Msg )
@@ -975,7 +981,7 @@ scrollCmdForKnownTarget model index alignment =
             }
 
     else
-        Task.perform (\_ -> Scrolled) (Process.sleep 0)
+        Task.perform (\_ -> Scrolled) (Task.succeed ())
 
 
 computeElementStart : Model -> Int -> Float
@@ -1054,30 +1060,36 @@ In **your code** this would look like this:
 view : (String -> Html msg) -> Model -> (Msg -> msg) -> Html msg
 view renderRow model toSelf =
     let
+        height =
+            String.fromFloat (totalHeight model.cumulativeRowHeights)
+
+        rows =
+            renderRows model renderRow
+    in
+    div
+        (listAttributes model.listIsVisible model.listId toSelf)
+        [ renderSpacer height rows ]
+
+
+renderRows : Model -> (String -> Html msg) -> List (Html msg)
+renderRows model renderRow =
+    let
         ( start, end ) =
             model.visibleRows
 
         visibleItems =
             slice start end model.itemIds
-
-        height =
-            String.fromFloat (totalHeight model.cumulativeRowHeights)
-
-        rows =
-            List.indexedMap
-                (\localIndex id ->
-                    let
-                        globalIndex =
-                            start + localIndex
-                    in
-                    renderRow id
-                        |> renderLazyVirtualRow globalIndex model.cumulativeRowHeights
-                )
-                visibleItems
     in
-    div
-        (listAttributes model.listIsVisible model.listId toSelf)
-        [ renderSpacer height rows ]
+    List.indexedMap
+        (\localIndex id ->
+            let
+                globalIndex =
+                    start + localIndex
+            in
+            renderRow id
+                |> renderLazyVirtualRow globalIndex model.cumulativeRowHeights
+        )
+        visibleItems
 
 
 listAttributes : Bool -> String -> (Msg -> msg) -> List (Html.Attribute msg)
