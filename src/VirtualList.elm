@@ -183,10 +183,10 @@ type alias Model =
     , currentBuffer : Int
     , showListDuringMeasurement : Bool
     , listIsVisible : Bool
-    , visibleRange : ( Int, Int )
+    , visibleRows : ( Int, Int )
     , unmeasuredRows : Set Int
-    , itemHeights : Dict Int ItemHeight
-    , cumulativeHeights : Dict Int Float
+    , rowHeights : Dict Int RowHeight
+    , cumulativeRowHeights : Dict Int Float
     , scrollTop : Float
     , previousScrollTop : Float
     , scrollState : ScrollState
@@ -240,6 +240,12 @@ initWithConfig options =
 
             else
                 defaultConfig.defaultItemHeight
+
+        estimatedVisibleCount =
+            ceiling (validHeight / validDefaultItemHeight)
+
+        initialVisibleRows =
+            ( 0, estimatedVisibleCount + validBuffer )
     in
     { listId = validListId
     , itemIds = []
@@ -250,17 +256,17 @@ initWithConfig options =
     , showListDuringMeasurement = options.showListDuringMeasurement
     , listIsVisible = options.showListDuringMeasurement
     , defaultItemHeight = validDefaultItemHeight
-    , visibleRange = ( 0, 20 )
+    , visibleRows = initialVisibleRows
     , unmeasuredRows = Set.empty
-    , itemHeights = Dict.empty
-    , cumulativeHeights = Dict.empty
+    , rowHeights = Dict.empty
+    , cumulativeRowHeights = Dict.empty
     , scrollTop = 0
     , previousScrollTop = 0
     , scrollState = NoScroll
     }
 
 
-type ItemHeight
+type RowHeight
     = Unmeasured Float
     | Measured Float
 
@@ -503,16 +509,16 @@ This is useful when only a **subset of items** might have changed in height.
 -}
 setItemsAndRemeasure : Model -> { newIds : List String, idsToRemeasure : List String } -> ( Model, Cmd Msg )
 setItemsAndRemeasure model { newIds, idsToRemeasure } =
-    getRowHeightsFromCache { oldIds = model.itemIds, newIds = newIds, idsToRemeasure = idsToRemeasure } model.itemHeights model.defaultItemHeight
+    getRowHeightsFromCache { oldIds = model.itemIds, newIds = newIds, idsToRemeasure = idsToRemeasure } model.rowHeights model.defaultItemHeight
         |> updateModelWithNewItems model newIds
 
 
-updateModelWithNewItems : Model -> List String -> Dict Int ItemHeight -> ( Model, Cmd Msg )
+updateModelWithNewItems : Model -> List String -> Dict Int RowHeight -> ( Model, Cmd Msg )
 updateModelWithNewItems model ids updatedRowHeights =
     ( { model
         | itemIds = ids
-        , cumulativeHeights = calculateCumulativeHeights updatedRowHeights
-        , itemHeights = updatedRowHeights
+        , cumulativeRowHeights = calculateCumulativeHeights updatedRowHeights
+        , rowHeights = updatedRowHeights
       }
     , measureViewport model.listId
     )
@@ -520,11 +526,11 @@ updateModelWithNewItems model ids updatedRowHeights =
 
 getRowHeightsFromCache :
     { oldIds : List String, newIds : List String, idsToRemeasure : List String }
-    -> Dict Int ItemHeight
+    -> Dict Int RowHeight
     -- currentRowHeights (keyed by the old index)
     -> Float
     -- defaultItemHeight
-    -> Dict Int ItemHeight
+    -> Dict Int RowHeight
 getRowHeightsFromCache ids currentRowHeights defaultItemHeight =
     ids.newIds
         |> List.indexedMap (mapRowHeight ids currentRowHeights defaultItemHeight)
@@ -533,11 +539,11 @@ getRowHeightsFromCache ids currentRowHeights defaultItemHeight =
 
 mapRowHeight :
     { oldIds : List String, newIds : List String, idsToRemeasure : List String }
-    -> Dict Int ItemHeight
+    -> Dict Int RowHeight
     -> Float
     -> Int
     -> String
-    -> ( Int, ItemHeight )
+    -> ( Int, RowHeight )
 mapRowHeight { oldIds, idsToRemeasure } currentRowHeights defaultItemHeight newIndex id =
     let
         maybeOldIndex =
@@ -562,13 +568,13 @@ findIndexForId ids id =
     List.Extra.findIndex ((==) id) ids
 
 
-calculateCumulativeHeights : Dict Int ItemHeight -> Dict Int Float
+calculateCumulativeHeights : Dict Int RowHeight -> Dict Int Float
 calculateCumulativeHeights heights =
     foldl insertCumulativeHeight ( Dict.empty, 0 ) heights
         |> Tuple.first
 
 
-insertCumulativeHeight : comparable -> ItemHeight -> ( Dict comparable Float, Float ) -> ( Dict comparable Float, Float )
+insertCumulativeHeight : comparable -> RowHeight -> ( Dict comparable Float, Float ) -> ( Dict comparable Float, Float )
 insertCumulativeHeight index rowHeight ( cumulativeHeights, cumulative ) =
     let
         height =
@@ -580,7 +586,7 @@ insertCumulativeHeight index rowHeight ( cumulativeHeights, cumulative ) =
     ( Dict.insert index cumulativeHeight cumulativeHeights, cumulativeHeight )
 
 
-rowHeightToFloat : ItemHeight -> Float
+rowHeightToFloat : RowHeight -> Float
 rowHeightToFloat rowHeight =
     case rowHeight of
         Measured value ->
@@ -590,17 +596,17 @@ rowHeightToFloat rowHeight =
             value
 
 
-calculateVisibleRange : Model -> Float -> Float -> ( Int, Int )
-calculateVisibleRange model scrollTop containerHeight =
+calculateVisibleRows : Model -> Float -> Float -> ( Int, Int )
+calculateVisibleRows model scrollTop containerHeight =
     let
         keys =
-            Dict.keys model.cumulativeHeights
+            Dict.keys model.cumulativeRowHeights
 
         itemCount =
             List.length model.itemIds
 
         height index =
-            Maybe.withDefault model.defaultItemHeight (Dict.get index model.cumulativeHeights)
+            Maybe.withDefault model.defaultItemHeight (Dict.get index model.cumulativeRowHeights)
 
         start =
             keys
@@ -646,7 +652,7 @@ updateRowHeightAndScroll model index element =
             element.element.height
 
         updatedRowHeights =
-            Dict.insert index (Measured height) model.itemHeights
+            Dict.insert index (Measured height) model.rowHeights
 
         updatedCumulativeHeights =
             calculateCumulativeHeights updatedRowHeights
@@ -657,8 +663,8 @@ updateRowHeightAndScroll model index element =
         newModel =
             { model
                 | unmeasuredRows = remainingUnmeasured
-                , cumulativeHeights = updatedCumulativeHeights
-                , itemHeights = updatedRowHeights
+                , cumulativeRowHeights = updatedCumulativeHeights
+                , rowHeights = updatedRowHeights
             }
                 |> checkAndReveal
     in
@@ -671,13 +677,13 @@ checkAndReveal : Model -> Model
 checkAndReveal model =
     let
         ( start, end ) =
-            model.visibleRange
+            model.visibleRows
 
         visibleIndices =
             List.range start (end - 1)
 
         unmeasuredVisible =
-            List.filter (\i -> isUnmeasured model.itemHeights i) visibleIndices
+            List.filter (\i -> isUnmeasured model.rowHeights i) visibleIndices
 
         _ =
             log "checkAndReveal" model.scrollState
@@ -709,11 +715,11 @@ handleSuccessfulViewportUpdate model viewport =
             viewport.viewport.height
 
         (( start, end ) as visibleRange) =
-            calculateVisibleRange model newScrollTop newContainerHeight
+            calculateVisibleRows model newScrollTop newContainerHeight
 
         unmeasuredIndices =
             List.range start (end - 1)
-                |> List.filter (isUnmeasured model.itemHeights)
+                |> List.filter (isUnmeasured model.rowHeights)
 
         measureCmds =
             unmeasuredIndices
@@ -724,14 +730,14 @@ handleSuccessfulViewportUpdate model viewport =
         | listHeight = newContainerHeight
         , scrollTop = newScrollTop
         , previousScrollTop = model.scrollTop
-        , visibleRange = visibleRange
+        , visibleRows = visibleRange
         , unmeasuredRows = Set.fromList unmeasuredIndices
       }
     , measureCmds
     )
 
 
-isUnmeasured : Dict comparable ItemHeight -> comparable -> Bool
+isUnmeasured : Dict comparable RowHeight -> comparable -> Bool
 isUnmeasured rowHeights index =
     case Dict.get index rowHeights of
         Just (Unmeasured _) ->
@@ -855,7 +861,7 @@ scrollToKnownItem : Model -> InProgressScrollState -> ( Model, Cmd Msg )
 scrollToKnownItem model scrollState =
     let
         rowIsMeasured =
-            isRowMeasured scrollState.targetIndex model.itemHeights
+            isRowMeasured scrollState.targetIndex model.rowHeights
 
         computedOffset =
             computeElementOffset model scrollState.targetIndex
@@ -878,7 +884,7 @@ scrollToKnownItem model scrollState =
     ( newModel, cmd )
 
 
-isRowMeasured : comparable -> Dict comparable ItemHeight -> Bool
+isRowMeasured : comparable -> Dict comparable RowHeight -> Bool
 isRowMeasured index heights =
     case Dict.get index heights of
         Just (Measured _) ->
@@ -890,7 +896,7 @@ isRowMeasured index heights =
 
 computeElementOffset : Model -> Int -> Float
 computeElementOffset model index =
-    if isRowMeasured index model.itemHeights then
+    if isRowMeasured index model.rowHeights then
         computeElementStart model index
 
     else
@@ -974,7 +980,7 @@ scrollCmdForKnownTarget model index alignment =
             { listId = model.listId
             , elementStart = elementStart
             , containerHeight = model.listHeight
-            , nextElementStart = Dict.get index model.cumulativeHeights
+            , nextElementStart = Dict.get index model.cumulativeRowHeights
             , alignment = alignment
             }
 
@@ -984,7 +990,7 @@ scrollCmdForKnownTarget model index alignment =
 
 computeElementStart : Model -> Int -> Float
 computeElementStart model index =
-    case Dict.get (index - 1) model.cumulativeHeights of
+    case Dict.get (index - 1) model.cumulativeRowHeights of
         Just h ->
             h
 
@@ -1030,6 +1036,10 @@ scrollToPosition position =
         ]
 
 
+
+-- VIEW
+
+
 {-| **Renders** the virtual list.
 
 You **provide** it with
@@ -1055,13 +1065,13 @@ view : (String -> Html msg) -> Model -> (Msg -> msg) -> Html msg
 view renderRow model toSelf =
     let
         ( start, end ) =
-            model.visibleRange
+            model.visibleRows
 
         visibleItems =
             slice start end model.itemIds
 
         height =
-            String.fromFloat (totalHeight model.cumulativeHeights)
+            String.fromFloat (totalHeight model.cumulativeRowHeights)
 
         rows =
             List.indexedMap
@@ -1071,7 +1081,7 @@ view renderRow model toSelf =
                             start + localIndex
                     in
                     renderRow id
-                        |> renderLazyVirtualRow globalIndex model.cumulativeHeights
+                        |> renderLazyVirtualRow globalIndex model.cumulativeRowHeights
                 )
                 visibleItems
     in
