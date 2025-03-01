@@ -109,7 +109,7 @@ type alias Config =
     { listId : String
     , initialHeight : Float
     , defaultItemHeight : Float
-    , showListDuringInitialMeasure : Bool
+    , showListDuringMeasurement : Bool
     , buffer : Int
     , dynamicBuffer : Bool
     }
@@ -120,7 +120,7 @@ type alias Config =
   - **`listId`:** The ID of the list container in the DOM.
   - **`initialHeight`:** Estimated height of the list before it is measured.
   - **`defaultItemHeight`:** Default height assigned to items before they are measured.
-  - **`showListDuringInitialMeasure`:** If `True`, the list is visible while measuring (potentially causing spacing issues).
+  - **`showListDuringMeasurement`:** If `True`, the list is visible while measuring (potentially causing spacing issues).
   - **`buffer`:** Number of items rendered outside the visible range to ensure smooth scrolling.
   - **`dynamicBuffer`:** If `True`, increases buffer size when scrolling quickly.
 
@@ -130,7 +130,7 @@ defaultConfig =
     { listId = "virtual-list"
     , initialHeight = 500
     , defaultItemHeight = 26
-    , showListDuringInitialMeasure = False
+    , showListDuringMeasurement = False
     , buffer = 5
     , dynamicBuffer = True
     }
@@ -142,7 +142,7 @@ defaultConfig =
     { listId = "virtual-list"
     , initialHeight = 500
     , defaultItemHeight = 26
-    , showListDuringInitialMeasure = False
+    , showListDuringMeasurement = False
     , buffer = 5
     , dynamicBuffer = True
     }
@@ -167,16 +167,15 @@ type alias Model =
     , baseBuffer : Int
     , dynamicBuffer : Bool
     , buffer : Int
-    , showListDuringInitialMeasure : Bool
+    , showListDuringMeasurement : Bool
     , showList : Bool
     , visibleRange : ( Int, Int )
-    , firstRender : Bool
     , unmeasuredRows : Set Int
     , rowHeights : Dict Int RowHeight
     , cumulativeHeights : Dict Int Float
     , scrollTop : Float
     , previousScrollTop : Float
-    , pendingScroll : PendingScroll
+    , scrollState : ScrollState
     }
 
 
@@ -234,17 +233,16 @@ initWithConfig options =
     , baseBuffer = validBuffer
     , dynamicBuffer = options.dynamicBuffer
     , buffer = validBuffer
-    , showListDuringInitialMeasure = options.showListDuringInitialMeasure
-    , showList = options.showListDuringInitialMeasure
+    , showListDuringMeasurement = options.showListDuringMeasurement
+    , showList = options.showListDuringMeasurement
     , defaultItemHeight = validDefaultItemHeight
     , visibleRange = ( 0, 20 )
-    , firstRender = True
     , unmeasuredRows = Set.empty
     , rowHeights = Dict.empty
     , cumulativeHeights = Dict.empty
     , scrollTop = 0
     , previousScrollTop = 0
-    , pendingScroll = NoScroll
+    , scrollState = NoScroll
     }
 
 
@@ -266,9 +264,9 @@ You need to **include** `VirtualList.Msg` in your app’s `Msg` type and handle 
 -}
 type Msg
     = NoOp
-    | RecheckScroll String Alignment
     | RowElementReceived Int (Result Browser.Dom.Error Browser.Dom.Element)
     | Scrolled
+    | ScrollStartRequested String Alignment
     | ViewportUpdated (Result Browser.Dom.Error Browser.Dom.Viewport)
 
 
@@ -296,14 +294,18 @@ update msg model =
         NoOp ->
             ( model, Cmd.none )
 
-        RecheckScroll id alignment ->
-            scrollToItem model id alignment
-
         RowElementReceived index result ->
-            measureRow model index result
+            handleMeasurementResultAndScroll model index result
 
         Scrolled ->
             updateOnScroll model
+
+        ScrollStartRequested id alignment ->
+            let
+                _ =
+                    Debug.log "ScrollStartRequested" id
+            in
+            scrollToItem model id alignment
 
         ViewportUpdated result ->
             updateOnViewportChange model result
@@ -316,16 +318,21 @@ updateOnScroll model =
             abs (model.scrollTop - model.previousScrollTop)
 
         newBuffer =
-            if model.dynamicBuffer && model.pendingScroll == NoScroll then
+            if model.dynamicBuffer && model.scrollState == NoScroll then
                 calculateDynamicBuffer model.baseBuffer scrollSpeed
 
             else
                 model.buffer
 
-        newModel =
-            stopScrollingIfTargetReached model
+        ( newModel, scrollCmd ) =
+            continueScrollToTarget model
     in
-    ( { newModel | buffer = newBuffer }, measureViewport model.listId )
+    ( { newModel | buffer = newBuffer }
+    , Cmd.batch
+        [ measureViewport model.listId
+        , scrollCmd
+        ]
+    )
 
 
 scrollTargetToleranceInPixel : Float
@@ -333,35 +340,25 @@ scrollTargetToleranceInPixel =
     20
 
 
-stopScrollingIfTargetReached : Model -> Model
-stopScrollingIfTargetReached model =
-    case model.pendingScroll of
-        Pending pending ->
+continueScrollToTarget : Model -> ( Model, Cmd Msg )
+continueScrollToTarget model =
+    case model.scrollState of
+        InProgress scrollState ->
             let
-                updatedPending =
-                    updatePendingScrollWithNewMeasurements model pending
+                updatedScrollState =
+                    updatePendingScrollWithNewMeasurements model scrollState
             in
-            processScrollIfTargetFound model updatedPending
-                |> Maybe.withDefault { model | pendingScroll = Pending updatedPending }
+            processScroll model updatedScrollState
 
         _ ->
-            model
+            ( { model | showList = True }, Cmd.none )
 
 
-processScrollIfTargetFound : Model -> PendingScrollState -> Maybe Model
-processScrollIfTargetFound model updatedPending =
-    findIndexForId model.ids updatedPending.targetId
-        |> Maybe.map (\_ -> processScroll updatedPending model)
-
-
-processScroll : PendingScrollState -> Model -> Model
-processScroll updatedPending model =
+processScroll : Model -> InProgressScrollState -> ( Model, Cmd Msg )
+processScroll model scrollState =
     let
         newTargetOffset =
-            updatedPending.targetOffset
-
-        tolerance =
-            scrollTargetToleranceInPixel
+            scrollState.targetOffset
 
         lowerBound =
             model.scrollTop
@@ -372,19 +369,77 @@ processScroll updatedPending model =
         isVisible =
             newTargetOffset >= lowerBound && newTargetOffset <= upperBound
 
+        scrollOffset =
+            abs (model.scrollTop - newTargetOffset)
+
         isClose =
-            abs (model.scrollTop - newTargetOffset) <= tolerance
+            scrollOffset <= scrollTargetToleranceInPixel
+
+        retryCount =
+            case model.scrollState of
+                SearchingForItem attempts ->
+                    attempts
+
+                _ ->
+                    0
+
+        newAttempts =
+            retryCount + 1
+
+        shouldRetry =
+            newAttempts < maxScrollRetries
+
+        stillTooFar =
+            not isVisible && scrollOffset > 1.5 * scrollTargetToleranceInPixel
 
         log =
-            { scrollTop = model.scrollTop, targetOffset = newTargetOffset, upperBound = upperBound, height = model.height, isClose = isClose, isVisible = isVisible }
+            { scrollTop = model.scrollTop
+            , targetOffset = newTargetOffset
+            , upperBound = upperBound
+            , height = model.height
+            , isClose = isClose
+            , isVisible = isVisible
+            , retries = retryCount
+            }
+
+        cmd =
+            Task.perform (\_ -> Scrolled) (Process.sleep 50)
     in
     if isVisible || isClose then
-        Debug.log "✅ Scrolling Done" log
-            |> (\_ -> { model | pendingScroll = NoScroll })
+        if scrollState.stableCount > 2 then
+            Debug.log "✅ Scrolling Done" log
+                |> (\_ -> ( { model | scrollState = NoScroll, showList = True }, cmd ))
+
+        else
+            Debug.log "❓ Scrolling Might Be Done" log
+                |> (\_ ->
+                        ( { model
+                            | scrollState =
+                                InProgress
+                                    { scrollState
+                                        | stableCount = scrollState.stableCount + 1
+                                    }
+                          }
+                        , cmd
+                        )
+                   )
+
+    else if shouldRetry && stillTooFar then
+        Debug.log "🔄 Still Scrolling - Retrying Scroll" log
+            |> (\_ ->
+                    ( model
+                    , cmd
+                    )
+               )
 
     else
-        Debug.log "🔄 Still Scrolling" log
-            |> (\_ -> { model | pendingScroll = Pending updatedPending })
+        Debug.log "🛑 Max retries reached, stopping scroll attempt." log
+            |> (\_ -> ( { model | scrollState = NoScroll, showList = True }, Cmd.none ))
+
+
+maxScrollRetries : Int
+maxScrollRetries =
+    10
 
 
 maxBufferMultiplier : Int
@@ -422,7 +477,7 @@ setItemsAndRemeasureAll model newIds =
         ( newModel, cmd ) =
             setItemsAndRemeasure model { newIds = newIds, idsToRemeasure = newIds }
     in
-    ( { newModel | showList = model.showListDuringInitialMeasure }, cmd )
+    ( { newModel | showList = Debug.log "showing list from setItemsAndRemeasureAll" model.showListDuringMeasurement }, cmd )
 
 
 {-| Same as `setItems`, but allows specifying which **items should be remeasured.**
@@ -550,19 +605,19 @@ calculateVisibleRange model scrollTop containerHeight =
     ( max 0 (start - buffer), min itemCount (end + buffer) )
 
 
-measureRow : Model -> Int -> Result Browser.Dom.Error Browser.Dom.Element -> ( Model, Cmd Msg )
-measureRow model index result =
+handleMeasurementResultAndScroll : Model -> Int -> Result Browser.Dom.Error Browser.Dom.Element -> ( Model, Cmd Msg )
+handleMeasurementResultAndScroll model index result =
     case result of
         Ok element ->
-            updateRowHeightWithMeasurement model index element
+            updateRowHeightAndScroll model index element
 
         Err error ->
             let
                 cmd =
-                    case ( error, model.pendingScroll ) of
-                        ( Browser.Dom.NotFound _, Pending pending ) ->
+                    case ( error, model.scrollState ) of
+                        ( Browser.Dom.NotFound _, InProgress pending ) ->
                             -- Retry scrolling to the target so it becomes visible and measurable.
-                            scrollCmdForTarget model (Debug.log "extra command" pending.targetId) pending.alignment
+                            scrollCmdForKnownTarget model (Debug.log "measureRowAndScroll, scrolling to index" index) pending.alignment
 
                         _ ->
                             Cmd.none
@@ -570,8 +625,8 @@ measureRow model index result =
             ( model, cmd )
 
 
-updateRowHeightWithMeasurement : Model -> Int -> Browser.Dom.Element -> ( Model, Cmd Msg )
-updateRowHeightWithMeasurement model index element =
+updateRowHeightAndScroll : Model -> Int -> Browser.Dom.Element -> ( Model, Cmd Msg )
+updateRowHeightAndScroll model index element =
     let
         height =
             element.element.height
@@ -609,8 +664,11 @@ checkAndReveal model =
 
         unmeasuredVisible =
             List.filter (\i -> isUnmeasured model.rowHeights i) visibleIndices
+
+        _ =
+            Debug.log "checkAndReveal" model.scrollState
     in
-    if List.isEmpty unmeasuredVisible then
+    if List.isEmpty unmeasuredVisible && model.scrollState == NoScroll then
         { model | showList = True }
 
     else
@@ -699,38 +757,34 @@ type Alignment
     | Bottom
 
 
-type PendingScroll
-    = NoScroll
-    | Pending PendingScrollState
-    | Attempting Int
+type ScrollState
+    = InProgress InProgressScrollState
+    | NoScroll
+    | SearchingForItem Int
 
 
-type alias PendingScrollState =
-    { targetId : String
+type alias InProgressScrollState =
+    { targetIndex : Int
     , alignment : Alignment
     , targetOffset : Float
+    , stableCount : Int
     }
 
 
-updatePendingScrollWithNewMeasurements : Model -> PendingScrollState -> PendingScrollState
+updatePendingScrollWithNewMeasurements : Model -> InProgressScrollState -> InProgressScrollState
 updatePendingScrollWithNewMeasurements model pending =
-    case findIndexForId model.ids pending.targetId of
-        Just index ->
-            let
-                newOffset =
-                    computeElementStart model index
+    let
+        newOffset =
+            computeElementStart model pending.targetIndex
 
-                delta =
-                    abs (newOffset - pending.targetOffset)
-            in
-            if delta > scrollTargetToleranceInPixel then
-                { pending | targetOffset = newOffset }
+        delta =
+            abs (newOffset - pending.targetOffset)
+    in
+    if delta > scrollTargetToleranceInPixel then
+        { pending | targetOffset = newOffset }
 
-            else
-                pending
-
-        Nothing ->
-            pending
+    else
+        pending
 
 
 {-| Scrolls to the **specified item** in the virtual list.
@@ -748,39 +802,63 @@ Does nothing if the item is **already visible.**
 -}
 scrollToItem : Model -> String -> Alignment -> ( Model, Cmd Msg )
 scrollToItem model id alignment =
-    case findIndexForId model.ids id of
+    let
+        newModel =
+            { model | showList = model.showListDuringMeasurement }
+    in
+    case findIndexForId newModel.ids id of
         Just index ->
-            scrollToKnownItem model id alignment index
+            startScrollingToKnownItem newModel alignment (Debug.log "scrollToItem, found" index)
 
         Nothing ->
-            recheckScroll model id alignment
+            let
+                _ =
+                    Debug.log "scrollToItem, not found" id
+            in
+            startScrollInNextUpdateCycle newModel id alignment
 
 
-scrollToKnownItem : Model -> String -> Alignment -> Int -> ( Model, Cmd Msg )
-scrollToKnownItem model id alignment index =
+startScrollingToKnownItem : Model -> Alignment -> Int -> ( Model, Cmd Msg )
+startScrollingToKnownItem model alignment index =
     let
-        rowIsMeasured =
-            isRowMeasured index model.rowHeights
-
-        computedOffset =
-            computeElementOffset model index
+        pendingScrollState =
+            { targetIndex = index
+            , alignment = alignment
+            , targetOffset = 0
+            , stableCount = 0
+            }
 
         newModel =
             { model
-                | pendingScroll =
-                    Pending
-                        { targetId = id
-                        , alignment = alignment
-                        , targetOffset = computedOffset
-                        }
+                | scrollState = InProgress pendingScrollState
+            }
+    in
+    scrollToKnownItem newModel pendingScrollState
+
+
+scrollToKnownItem : Model -> InProgressScrollState -> ( Model, Cmd Msg )
+scrollToKnownItem model scrollState =
+    let
+        rowIsMeasured =
+            isRowMeasured scrollState.targetIndex model.rowHeights
+
+        computedOffset =
+            computeElementOffset model scrollState.targetIndex
+
+        newScrollState =
+            { scrollState | targetOffset = computedOffset }
+
+        newModel =
+            { model
+                | scrollState = InProgress newScrollState
             }
 
         cmd =
-            if rowIsMeasured then
-                scrollCmdForTarget newModel id alignment
+            if Debug.log "rowIsMeasured" rowIsMeasured then
+                scrollCmdForKnownTarget newModel newScrollState.targetIndex newScrollState.alignment
 
             else
-                requestRowMeasurement index
+                requestRowMeasurement scrollState.targetIndex
     in
     ( newModel, cmd )
 
@@ -804,39 +882,39 @@ computeElementOffset model index =
         model.defaultItemHeight * toFloat index
 
 
-recheckScroll : Model -> String -> Alignment -> ( Model, Cmd Msg )
-recheckScroll model id alignment =
-    case model.pendingScroll of
-        Attempting attempts ->
-            checkAttemptsAndPerformScrollRecheck model attempts id alignment
+startScrollInNextUpdateCycle : Model -> String -> Alignment -> ( Model, Cmd Msg )
+startScrollInNextUpdateCycle model id alignment =
+    case Debug.log "recheckScroll" model.scrollState of
+        SearchingForItem attempts ->
+            increaseAttemptsAndAttemptScrollInNextUpdateCycle model id alignment attempts
 
-        Pending _ ->
+        InProgress _ ->
             ( model, Cmd.none )
 
         NoScroll ->
-            checkAttemptsAndPerformScrollRecheck model 0 id alignment
+            increaseAttemptsAndAttemptScrollInNextUpdateCycle model id alignment 0
 
 
-checkAttemptsAndPerformScrollRecheck : Model -> Int -> String -> Alignment -> ( Model, Cmd Msg )
-checkAttemptsAndPerformScrollRecheck model attempts id alignment =
+increaseAttemptsAndAttemptScrollInNextUpdateCycle : Model -> String -> Alignment -> Int -> ( Model, Cmd Msg )
+increaseAttemptsAndAttemptScrollInNextUpdateCycle model id alignment attempts =
     if attempts < maxRecheckAttempts then
         let
             newAttempts =
                 attempts + 1
 
             newModel =
-                { model | pendingScroll = Attempting newAttempts }
+                { model | scrollState = SearchingForItem newAttempts }
         in
-        ( newModel, performScrollRecheck id alignment )
+        ( newModel, startScrollingInNextUpdateCycle id alignment )
 
     else
         -- Maximum attempts reached; clear pending scroll.
-        ( { model | pendingScroll = NoScroll }, Cmd.none )
+        ( { model | scrollState = NoScroll, showList = True }, Cmd.none )
 
 
-performScrollRecheck : String -> Alignment -> Cmd Msg
-performScrollRecheck id alignment =
-    Task.perform (\_ -> RecheckScroll id alignment) (Process.sleep 100)
+startScrollingInNextUpdateCycle : String -> Alignment -> Cmd Msg
+startScrollingInNextUpdateCycle id alignment =
+    Task.perform (\_ -> ScrollStartRequested id alignment) (Process.sleep 100)
 
 
 maxRecheckAttempts : Int
@@ -846,42 +924,57 @@ maxRecheckAttempts =
 
 maybePendingScrollCmd : Model -> Cmd Msg
 maybePendingScrollCmd model =
-    case model.pendingScroll of
-        Pending { targetId, alignment } ->
-            scrollCmdForTarget model targetId alignment
-
-        NoScroll ->
-            Cmd.none
-
-        Attempting _ ->
-            Cmd.none
-
-
-scrollCmdForTarget : Model -> String -> Alignment -> Cmd Msg
-scrollCmdForTarget model targetId alignment =
-    case findIndexForId model.ids targetId of
-        Just index ->
-            let
-                elementStart =
-                    computeElementStart model index
-
-                scrollNeeded =
-                    needsScrollCorrection model elementStart
-            in
-            if scrollNeeded then
-                scrollToPosition
-                    { targetId = model.listId
-                    , elementStart = elementStart
-                    , containerHeight = model.height
-                    , nextElementStart = Dict.get index model.cumulativeHeights
-                    , alignment = alignment
-                    }
+    case model.scrollState of
+        InProgress { targetIndex, alignment } ->
+            if Set.isEmpty model.unmeasuredRows then
+                scrollCmdForKnownTarget model (Debug.log "maybePendingScrollCmd" targetIndex) alignment
 
             else
                 Cmd.none
 
-        Nothing ->
+        NoScroll ->
             Cmd.none
+
+        SearchingForItem _ ->
+            Cmd.none
+
+
+scrollCmdForKnownTarget : Model -> Int -> Alignment -> Cmd Msg
+scrollCmdForKnownTarget model index alignment =
+    let
+        elementStart =
+            computeElementStart model index
+
+        scrollNeeded =
+            needsScrollCorrection model elementStart
+
+        _ =
+            Debug.log "scrollCmdForKnownTarget"
+                { index = index
+                , scrollNeeded = scrollNeeded
+                }
+    in
+    if scrollNeeded then
+        scrollToPosition
+            { listId = model.listId
+            , elementStart = elementStart
+            , containerHeight = model.height
+            , nextElementStart = Dict.get index model.cumulativeHeights
+            , alignment = alignment
+            }
+
+    else
+        Task.perform (\_ -> Scrolled) (Process.sleep 0)
+
+
+
+-- scrollCmdForTarget : Model -> String -> Alignment -> Cmd Msg
+-- scrollCmdForTarget model targetId alignment =
+--     case findIndexForId model.ids targetId of
+--         Just index ->
+--             scrollCmdForKnownTarget model index alignment
+--         Nothing ->
+--             Task.perform (\_ -> Scrolled) (Process.sleep 0)
 
 
 computeElementStart : Model -> Int -> Float
@@ -900,7 +993,7 @@ needsScrollCorrection model targetOffset =
 
 
 type alias ScrollPosition =
-    { targetId : String
+    { listId : String
     , elementStart : Float
     , containerHeight : Float
     , nextElementStart : Maybe Float
@@ -925,8 +1018,11 @@ scrollToPosition position =
                 Bottom ->
                     nextElementStart - position.containerHeight
     in
-    Browser.Dom.setViewportOf position.targetId 0 finalPosition
-        |> Task.attempt (\_ -> NoOp)
+    Cmd.batch
+        [ Browser.Dom.setViewportOf position.listId 0 finalPosition
+            |> Task.attempt (\_ -> NoOp)
+        , Task.perform (\_ -> Scrolled) (Process.sleep 20) -- Make sure we're never stuck in the still need to scroll state
+        ]
 
 
 {-| **Renders** the virtual list.
