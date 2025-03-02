@@ -525,14 +525,28 @@ This is useful when only a **subset of items** might have changed in height.
 -}
 setItemsAndRemeasure : Model -> { newIds : List String, idsToRemeasure : List String } -> ( Model, Cmd Msg )
 setItemsAndRemeasure model { newIds, idsToRemeasure } =
-    getRowHeightsFromCache
-        { oldIds = model.itemIds
-        , newIds = newIds
-        , idsToRemeasure = idsToRemeasure
-        }
-        model.rowHeights
-        model.defaultItemHeight
-        |> updateModelWithNewItems model newIds
+    let
+        settingFirstItems =
+            List.isEmpty model.itemIds
+
+        onlyFewItemsToRemeasure =
+            List.length (Debug.log "idsToRemeasure" idsToRemeasure) <= 2
+
+        showList =
+            model.showListDuringMeasurement
+                || (not (Debug.log "settingFirstItems" settingFirstItems) && Debug.log "onlyFewItemsToRemeasure" onlyFewItemsToRemeasure)
+
+        ( newModel, cmd ) =
+            getRowHeightsFromCache
+                { oldIds = model.itemIds
+                , newIds = newIds
+                , idsToRemeasure = idsToRemeasure
+                }
+                model.rowHeights
+                model.defaultItemHeight
+                |> updateModelWithNewItems model newIds
+    in
+    ( { newModel | listIsVisible = Debug.log "showList" showList }, cmd )
 
 
 updateModelWithNewItems : Model -> List String -> Dict Int RowHeight -> ( Model, Cmd Msg )
@@ -541,7 +555,6 @@ updateModelWithNewItems model ids updatedRowHeights =
         | itemIds = ids
         , cumulativeRowHeights = calculateCumulativeRowHeights updatedRowHeights
         , rowHeights = updatedRowHeights
-        , listIsVisible = model.showListDuringMeasurement
       }
     , measureViewport model.listId
     )
