@@ -513,11 +513,7 @@ Use this when item heights may have **changed.**
 -}
 setItemsAndRemeasureAll : Model -> List String -> ( Model, Cmd Msg )
 setItemsAndRemeasureAll model newIds =
-    let
-        ( newModel, cmd ) =
-            setItemsAndRemeasure model { newIds = newIds, idsToRemeasure = newIds }
-    in
-    ( { newModel | listIsVisible = log "showing list from setItemsAndRemeasureAll" model.showListDuringMeasurement }, cmd )
+    setItemsAndRemeasure model { newIds = newIds, idsToRemeasure = newIds }
 
 
 {-| Same as `setItems`, but allows specifying which **items should be remeasured.**
@@ -529,7 +525,13 @@ This is useful when only a **subset of items** might have changed in height.
 -}
 setItemsAndRemeasure : Model -> { newIds : List String, idsToRemeasure : List String } -> ( Model, Cmd Msg )
 setItemsAndRemeasure model { newIds, idsToRemeasure } =
-    getRowHeightsFromCache { oldIds = model.itemIds, newIds = newIds, idsToRemeasure = idsToRemeasure } model.rowHeights model.defaultItemHeight
+    getRowHeightsFromCache
+        { oldIds = model.itemIds
+        , newIds = newIds
+        , idsToRemeasure = idsToRemeasure
+        }
+        model.rowHeights
+        model.defaultItemHeight
         |> updateModelWithNewItems model newIds
 
 
@@ -539,6 +541,7 @@ updateModelWithNewItems model ids updatedRowHeights =
         | itemIds = ids
         , cumulativeRowHeights = calculateCumulativeRowHeights updatedRowHeights
         , rowHeights = updatedRowHeights
+        , listIsVisible = model.showListDuringMeasurement
       }
     , measureViewport model.listId
     )
