@@ -100,6 +100,7 @@ import Html.Lazy exposing (lazy2)
 import Json.Decode as Decode
 import List
 import List.Extra
+import Measurable exposing (Measurable(..))
 import Process
 import Set exposing (Set)
 import Task
@@ -205,7 +206,6 @@ You **create** one with the `init` function.
 type alias Model =
     { listId : String
     , itemIds : List String
-    , listHeight : Float
     , defaultItemHeight : Float
     , baseBuffer : Int
     , dynamicBuffer : Bool
@@ -216,9 +216,30 @@ type alias Model =
     , unmeasuredRows : Set Int
     , rowHeights : Dict Int RowHeight
     , cumulativeRowHeights : Dict Int Float
-    , scrollTop : Float
-    , previousScrollTop : Float
     , scrollState : ScrollState
+    , viewport : Measurable Viewport
+    }
+
+
+type ScrollState
+    = InProgress InProgressScrollState
+    | ManualScroll
+    | NoScroll
+    | SearchingForItem Int
+
+
+type alias InProgressScrollState =
+    { targetIndex : Int
+    , alignment : Alignment
+    , targetOffset : Float
+    , stableCount : Int
+    }
+
+
+type alias Viewport =
+    { height : Float
+    , previousScrollTop : Float
+    , scrollTop : Float
     }
 
 
@@ -278,7 +299,6 @@ initWithConfig options =
     in
     { listId = validListId
     , itemIds = []
-    , listHeight = validHeight
     , baseBuffer = validBuffer
     , dynamicBuffer = options.dynamicBuffer
     , currentBuffer = validBuffer
@@ -289,15 +309,18 @@ initWithConfig options =
     , unmeasuredRows = Set.empty
     , rowHeights = Dict.empty
     , cumulativeRowHeights = Dict.empty
-    , scrollTop = 0
-    , previousScrollTop = 0
     , scrollState = NoScroll
+    , viewport =
+        Unmeasured
+            { height = validHeight
+            , previousScrollTop = 0
+            , scrollTop = 0
+            }
     }
 
 
-type RowHeight
-    = Unmeasured Float
-    | Measured Float
+type alias RowHeight =
+    Measurable Float
 
 
 {-| **Messages** handled by the virtual list.
@@ -314,8 +337,10 @@ You need to **include** `VirtualList.Msg` in your app’s `Msg` type and handle 
 type Msg
     = NoOp
     | RowElementReceived Int (Result Browser.Dom.Error Browser.Dom.Element)
-    | Scrolled
+    | Scrolled Float
+    | ScrollRecheckRequested
     | ScrollStartRequested String Alignment
+    | ScrollStopCheckRequested Float
     | ViewportUpdated (Result Browser.Dom.Error Browser.Dom.Viewport)
 
 
@@ -346,8 +371,21 @@ update msg model =
         RowElementReceived index result ->
             measureElementAndScroll model index result
 
-        Scrolled ->
-            updateBufferMeasureViewportAndContinueScroll model
+        Scrolled scrollTop ->
+            let
+                ( newModel, measureCmd ) =
+                    updateScroll model scrollTop
+                        |> measureVisibleRows
+            in
+            ( newModel
+            , Cmd.batch
+                [ measureCmd
+                , Task.perform (\_ -> ScrollStopCheckRequested scrollTop) (Process.sleep 200)
+                ]
+            )
+
+        ScrollRecheckRequested ->
+            continueScrollToTarget model
 
         ScrollStartRequested id alignment ->
             let
@@ -356,38 +394,76 @@ update msg model =
             in
             scrollToItem model id alignment
 
+        ScrollStopCheckRequested scrollTop ->
+            let
+                viewport =
+                    Measurable.value model.viewport
+            in
+            if scrollTop == viewport.scrollTop then
+                ( { model | scrollState = log "scrollRecheck" NoScroll }, Cmd.none )
+
+            else
+                ( model, Cmd.none )
+
         ViewportUpdated result ->
-            updateOnViewportChange model result
+            handleViewportChange model result
 
 
-updateBufferMeasureViewportAndContinueScroll : Model -> ( Model, Cmd Msg )
-updateBufferMeasureViewportAndContinueScroll model =
+updateScroll : Model -> Float -> Model
+updateScroll model newScrollTop =
     let
-        newBuffer =
-            updateBuffer model
+        _ =
+            log "updateScroll" model.scrollState
 
-        ( newModel, scrollCmd ) =
-            continueScrollToTarget model
+        newModel =
+            if model.scrollState == NoScroll then
+                { model | scrollState = ManualScroll }
+
+            else
+                model
     in
-    ( { newModel | currentBuffer = newBuffer }
-    , Cmd.batch
-        [ measureViewport model.listId
-        , scrollCmd
-        ]
-    )
+    updateScrollTop newModel newScrollTop
+        |> updateBuffer
 
 
-updateBuffer : Model -> Int
+updateScrollTop : Model -> Float -> Model
+updateScrollTop model newScrollTop =
+    { model | viewport = setScrollTop model.viewport newScrollTop }
+
+
+setScrollTop : Measurable Viewport -> Float -> Measurable Viewport
+setScrollTop measurableViewport newScrollTop =
+    case measurableViewport of
+        Unmeasured viewport ->
+            Unmeasured { viewport | previousScrollTop = viewport.scrollTop, scrollTop = newScrollTop }
+
+        Measured viewport ->
+            Measured { viewport | previousScrollTop = viewport.scrollTop, scrollTop = newScrollTop }
+
+
+updateBuffer : Model -> Model
 updateBuffer model =
-    let
-        scrollSpeed =
-            abs (model.scrollTop - model.previousScrollTop)
-    in
-    if model.dynamicBuffer && model.scrollState == NoScroll then
-        calculateDynamicBuffer model.baseBuffer scrollSpeed
+    { model | currentBuffer = calculateBuffer model }
+
+
+calculateBuffer : Model -> Int
+calculateBuffer model =
+    if model.dynamicBuffer && model.scrollState == ManualScroll then
+        Measurable.value model.viewport
+            |> calculateDynamicBuffer model.baseBuffer
 
     else
         model.currentBuffer
+
+
+calculateDynamicBuffer : Int -> Viewport -> Int
+calculateDynamicBuffer base viewport =
+    base * min maxBufferMultiplier (1 + round (scrollSpeed viewport / 100))
+
+
+scrollSpeed : Viewport -> Float
+scrollSpeed viewport =
+    abs (viewport.scrollTop - viewport.previousScrollTop)
 
 
 continueScrollToTarget : Model -> ( Model, Cmd Msg )
@@ -400,27 +476,36 @@ continueScrollToTarget model =
             in
             processScroll model updatedScrollState
 
-        _ ->
+        ManualScroll ->
+            ( model, Cmd.none )
+
+        SearchingForItem _ ->
+            ( model, Cmd.none )
+
+        NoScroll ->
             ( { model | listIsVisible = True }, Cmd.none )
 
 
 processScroll : Model -> InProgressScrollState -> ( Model, Cmd Msg )
 processScroll model scrollState =
     let
+        viewport =
+            Measurable.value model.viewport
+
         newTargetOffset =
             scrollState.targetOffset
 
         lowerBound =
-            model.scrollTop
+            viewport.scrollTop
 
         upperBound =
-            model.scrollTop + model.listHeight
+            viewport.scrollTop + viewport.height
 
         isVisible =
             newTargetOffset >= lowerBound && newTargetOffset <= upperBound
 
         scrollOffset =
-            abs (model.scrollTop - newTargetOffset)
+            abs (viewport.scrollTop - newTargetOffset)
 
         isClose =
             scrollOffset <= scrollTargetToleranceInPixel
@@ -443,20 +528,20 @@ processScroll model scrollState =
             not isVisible && scrollOffset > 1.5 * scrollTargetToleranceInPixel
 
         logMessage =
-            { scrollTop = model.scrollTop
+            { scrollTop = viewport.scrollTop
             , targetOffset = newTargetOffset
             , upperBound = upperBound
-            , height = model.listHeight
+            , height = viewport.height
             , isClose = isClose
             , isVisible = isVisible
             , retries = retryCount
             }
 
         cmd =
-            Task.perform (\_ -> Scrolled) (Process.sleep 50)
+            Task.perform (\_ -> ScrollRecheckRequested) (Process.sleep 50)
     in
     if isVisible || isClose then
-        if scrollState.stableCount > scrollStabilityThreshold then
+        if scrollState.stableCount >= scrollStabilityThreshold then
             log "✅ Scrolling Done" logMessage
                 |> (\_ -> ( { model | scrollState = NoScroll, listIsVisible = True }, cmd ))
 
@@ -485,11 +570,6 @@ processScroll model scrollState =
     else
         log "🛑 Max retries reached, stopping scroll attempt." logMessage
             |> (\_ -> ( { model | scrollState = NoScroll, listIsVisible = True }, Cmd.none ))
-
-
-calculateDynamicBuffer : Int -> Float -> Int
-calculateDynamicBuffer base scrollSpeed =
-    base * min maxBufferMultiplier (1 + round (scrollSpeed / 100))
 
 
 {-| Updates the **list of items** displayed in the virtual list.
@@ -526,16 +606,6 @@ This is useful when only a **subset of items** might have changed in height.
 setItemsAndRemeasure : Model -> { newIds : List String, idsToRemeasure : List String } -> ( Model, Cmd Msg )
 setItemsAndRemeasure model { newIds, idsToRemeasure } =
     let
-        settingFirstItems =
-            List.isEmpty model.itemIds
-
-        onlyFewItemsToRemeasure =
-            List.length (Debug.log "idsToRemeasure" idsToRemeasure) <= 2
-
-        showList =
-            model.showListDuringMeasurement
-                || (not (Debug.log "settingFirstItems" settingFirstItems) && Debug.log "onlyFewItemsToRemeasure" onlyFewItemsToRemeasure)
-
         ( newModel, cmd ) =
             getRowHeightsFromCache
                 { oldIds = model.itemIds
@@ -546,7 +616,7 @@ setItemsAndRemeasure model { newIds, idsToRemeasure } =
                 model.defaultItemHeight
                 |> updateModelWithNewItems model newIds
     in
-    ( { newModel | listIsVisible = Debug.log "showList" showList }, cmd )
+    ( newModel |> setListVisibility, cmd )
 
 
 updateModelWithNewItems : Model -> List String -> Dict Int RowHeight -> ( Model, Cmd Msg )
@@ -556,16 +626,14 @@ updateModelWithNewItems model ids updatedRowHeights =
         , cumulativeRowHeights = calculateCumulativeRowHeights updatedRowHeights
         , rowHeights = updatedRowHeights
       }
-    , measureViewport model.listId
+    , measureViewport (log "measureViewport from updateModelWithNewItems" model.listId)
     )
 
 
 getRowHeightsFromCache :
     { oldIds : List String, newIds : List String, idsToRemeasure : List String }
     -> Dict Int RowHeight
-    -- currentRowHeights (keyed by the old index)
     -> Float
-    -- defaultItemHeight
     -> Dict Int RowHeight
 getRowHeightsFromCache ids currentRowHeights defaultItemHeight =
     ids.newIds
@@ -591,7 +659,7 @@ mapRowHeight { oldIds, idsToRemeasure } currentRowHeights defaultItemHeight newI
 
         newHeight =
             if List.member id idsToRemeasure then
-                Unmeasured (Maybe.withDefault defaultItemHeight (Maybe.map rowHeightToFloat existingHeight))
+                Unmeasured (Maybe.withDefault defaultItemHeight (Maybe.map Measurable.value existingHeight))
 
             else
                 Maybe.withDefault (Unmeasured defaultItemHeight) existingHeight
@@ -614,7 +682,7 @@ insertCumulativeHeight : comparable -> RowHeight -> ( Dict comparable Float, Flo
 insertCumulativeHeight index rowHeight ( cumulativeHeights, cumulative ) =
     let
         height =
-            rowHeightToFloat rowHeight
+            Measurable.value rowHeight
 
         cumulativeHeight =
             cumulative + height
@@ -622,19 +690,12 @@ insertCumulativeHeight index rowHeight ( cumulativeHeights, cumulative ) =
     ( Dict.insert index cumulativeHeight cumulativeHeights, cumulativeHeight )
 
 
-rowHeightToFloat : RowHeight -> Float
-rowHeightToFloat rowHeight =
-    case rowHeight of
-        Measured value ->
-            value
-
-        Unmeasured value ->
-            value
-
-
-calculateVisibleRows : Model -> Float -> Float -> ( Int, Int )
-calculateVisibleRows model scrollTop containerHeight =
+calculateVisibleRows : Model -> ( Int, Int )
+calculateVisibleRows model =
     let
+        viewport =
+            Measurable.value model.viewport
+
         keys =
             Dict.keys model.cumulativeRowHeights
 
@@ -646,13 +707,13 @@ calculateVisibleRows model scrollTop containerHeight =
 
         start =
             keys
-                |> List.Extra.find (\index -> height index >= scrollTop)
+                |> List.Extra.find (\index -> height index >= viewport.scrollTop)
                 |> Maybe.withDefault 0
 
         end =
             keys
                 |> List.reverse
-                |> List.Extra.find (\index -> height index < scrollTop + containerHeight)
+                |> List.Extra.find (\index -> height index < viewport.scrollTop + viewport.height)
                 |> Maybe.withDefault (itemCount - 1)
 
         buffer =
@@ -668,7 +729,7 @@ measureElementAndScroll model index result =
             updateRowHeightAndScroll model index element
 
         Err error ->
-            ( model, scrollCloserToTarget model error model.scrollState )
+            ( model |> setListVisibility, scrollCloserToTarget model error model.scrollState )
 
 
 scrollCloserToTarget : Model -> Browser.Dom.Error -> ScrollState -> Cmd Msg
@@ -702,56 +763,61 @@ updateRowHeightAndScroll model index element =
                 , cumulativeRowHeights = updatedCumulativeHeights
                 , rowHeights = updatedRowHeights
             }
-                |> showListIfAllVisibleRowsAreMeasured
+
+        cmd =
+            if Set.isEmpty newModel.unmeasuredRows then
+                maybePendingScrollCmd newModel
+
+            else
+                Cmd.none
     in
-    ( newModel
-    , maybePendingScrollCmd newModel
+    ( newModel |> setListVisibility
+    , cmd
     )
 
 
-showListIfAllVisibleRowsAreMeasured : Model -> Model
-showListIfAllVisibleRowsAreMeasured model =
-    let
-        ( start, end ) =
-            model.visibleRows
-
-        visibleIndices =
-            List.range start (end - 1)
-
-        unmeasuredVisibleRows =
-            List.filter (\i -> isUnmeasured model.rowHeights i) visibleIndices
-
-        _ =
-            log "checkAndReveal" model.scrollState
-    in
-    if List.isEmpty unmeasuredVisibleRows && model.scrollState == NoScroll then
-        { model | listIsVisible = True }
-
-    else
-        model
-
-
-updateOnViewportChange : Model -> Result Browser.Dom.Error Browser.Dom.Viewport -> ( Model, Cmd Msg )
-updateOnViewportChange model result =
+handleViewportChange : Model -> Result Browser.Dom.Error Browser.Dom.Viewport -> ( Model, Cmd Msg )
+handleViewportChange model result =
     case result of
         Ok viewport ->
-            measureVisibleRows model viewport
+            -- if log "viewport changed" (viewportChanged model.viewport viewport) || log "has unmeasured rows" (not (Set.isEmpty model.unmeasuredRows)) then
+            updateViewport model viewport
+                |> measureVisibleRows
 
+        -- else
+        --     ( model, Cmd.none )
         Err _ ->
             ( model, Cmd.none )
 
 
-measureVisibleRows : Model -> Browser.Dom.Viewport -> ( Model, Cmd Msg )
-measureVisibleRows model viewport =
+updateViewport : Model -> Browser.Dom.Viewport -> Model
+updateViewport model domViewport =
     let
-        newScrollTop =
-            viewport.viewport.y
+        oldViewport =
+            Measurable.value model.viewport
+    in
+    { model
+        | viewport =
+            Measured
+                { oldViewport
+                    | height = domViewport.viewport.height
+                    , previousScrollTop = oldViewport.scrollTop
+                    , scrollTop = domViewport.viewport.y
+                }
+    }
 
-        newListHeight =
-            viewport.viewport.height
 
+
+-- viewportChanged : Viewport -> Browser.Dom.Viewport -> Bool
+-- viewportChanged oldViewport viewport =
+--     oldViewport.height /= viewport.viewport.height || oldViewport.scrollTop /= viewport.viewport.y
+
+
+measureVisibleRows : Model -> ( Model, Cmd Msg )
+measureVisibleRows model =
+    let
         (( start, end ) as visibleRows) =
-            calculateVisibleRows model newScrollTop newListHeight
+            calculateVisibleRows model
 
         unmeasuredIndices =
             List.range start (end - 1)
@@ -761,16 +827,53 @@ measureVisibleRows model viewport =
             unmeasuredIndices
                 |> List.map requestRowMeasurement
                 |> Cmd.batch
+
+        newModel =
+            { model
+                | visibleRows = visibleRows
+                , unmeasuredRows = Set.fromList unmeasuredIndices
+            }
+                |> setListVisibility
     in
-    ( { model
-        | listHeight = newListHeight
-        , scrollTop = newScrollTop
-        , previousScrollTop = model.scrollTop
-        , visibleRows = visibleRows
-        , unmeasuredRows = Set.fromList unmeasuredIndices
-      }
-    , measureCmds
-    )
+    ( newModel, measureCmds )
+
+
+setListVisibility : Model -> Model
+setListVisibility model =
+    if model.listIsVisible then
+        { model | listIsVisible = log "should show list" (shouldShowList model) }
+
+    else
+        model
+
+
+shouldShowList : Model -> Bool
+shouldShowList model =
+    if
+        model.showListDuringMeasurement
+            || (log "scroll" model.scrollState == ManualScroll)
+    then
+        True
+
+    else
+        log "unmeasured items" (unmeasuredItemsInVisibleArea model.visibleRows model.rowHeights)
+
+
+unmeasuredItemsInVisibleArea : ( Int, Int ) -> Dict Int RowHeight -> Bool
+unmeasuredItemsInVisibleArea visibleRows rowHeights =
+    let
+        ( start, end ) =
+            visibleRows
+
+        visibleIndices =
+            List.range start (end - 1)
+
+        unmeasuredCount =
+            visibleIndices
+                |> List.filter (isUnmeasured rowHeights)
+                |> List.length
+    in
+    unmeasuredCount <= 1
 
 
 isUnmeasured : Dict comparable RowHeight -> comparable -> Bool
@@ -784,11 +887,6 @@ isUnmeasured rowHeights index =
 
         Nothing ->
             True
-
-
-hideListAndRequestRowMeasurement : Model -> Int -> ( Model, Cmd Msg )
-hideListAndRequestRowMeasurement model index =
-    ( { model | listIsVisible = model.showListDuringMeasurement }, requestRowMeasurement index )
 
 
 requestRowMeasurement : Int -> Cmd Msg
@@ -816,20 +914,6 @@ type Alignment
     = Top
     | Center
     | Bottom
-
-
-type ScrollState
-    = InProgress InProgressScrollState
-    | NoScroll
-    | SearchingForItem Int
-
-
-type alias InProgressScrollState =
-    { targetIndex : Int
-    , alignment : Alignment
-    , targetOffset : Float
-    , stableCount : Int
-    }
 
 
 updateScrollStateWithNewMeasurements : Model -> InProgressScrollState -> InProgressScrollState
@@ -915,7 +999,7 @@ scrollToKnownItem model scrollState =
                 ( newModelPre, scrollCmdForKnownTarget newModelPre newScrollState.targetIndex newScrollState.alignment )
 
             else
-                hideListAndRequestRowMeasurement newModelPre scrollState.targetIndex
+                ( newModelPre, requestRowMeasurement scrollState.targetIndex )
     in
     ( newModel, cmd )
 
@@ -930,6 +1014,9 @@ startScrollInNextUpdateCycle model id alignment =
             ( model, Cmd.none )
 
         NoScroll ->
+            increaseAttemptsAndAttemptScrollInNextUpdateCycle model id alignment 0
+
+        ManualScroll ->
             increaseAttemptsAndAttemptScrollInNextUpdateCycle model id alignment 0
 
 
@@ -959,16 +1046,15 @@ maybePendingScrollCmd : Model -> Cmd Msg
 maybePendingScrollCmd model =
     case model.scrollState of
         InProgress { targetIndex, alignment } ->
-            if Set.isEmpty model.unmeasuredRows then
-                scrollCmdForKnownTarget model (log "maybePendingScrollCmd" targetIndex) alignment
-
-            else
-                Cmd.none
+            scrollCmdForKnownTarget model (log "maybePendingScrollCmd" targetIndex) alignment
 
         NoScroll ->
             Cmd.none
 
         SearchingForItem _ ->
+            Cmd.none
+
+        ManualScroll ->
             Cmd.none
 
 
@@ -981,6 +1067,9 @@ scrollCmdForKnownTarget model index alignment =
         scrollNeeded =
             needsScrollCorrection model elementStart
 
+        containerHeight =
+            Measurable.value model.viewport |> .height
+
         _ =
             log "scrollCmdForKnownTarget"
                 { index = index
@@ -991,13 +1080,13 @@ scrollCmdForKnownTarget model index alignment =
         scrollToPosition
             { listId = model.listId
             , elementStart = elementStart
-            , containerHeight = model.listHeight
+            , containerHeight = containerHeight
             , nextElementStart = Dict.get index model.cumulativeRowHeights
             , alignment = alignment
             }
 
     else
-        Task.perform (\_ -> Scrolled) (Task.succeed ())
+        Task.perform (\_ -> ScrollRecheckRequested) (Task.succeed ())
 
 
 computeElementStart : Model -> Int -> Float
@@ -1012,7 +1101,11 @@ computeElementStart model index =
 
 needsScrollCorrection : Model -> Float -> Bool
 needsScrollCorrection model targetOffset =
-    abs (model.scrollTop - targetOffset) > 1
+    let
+        viewport =
+            Measurable.value model.viewport
+    in
+    abs (viewport.scrollTop - targetOffset) > 1
 
 
 type alias ScrollPosition =
@@ -1044,7 +1137,7 @@ scrollToPosition position =
     Cmd.batch
         [ Browser.Dom.setViewportOf position.listId 0 finalPosition
             |> Task.attempt (\_ -> NoOp)
-        , Task.perform (\_ -> Scrolled) (Process.sleep 20) -- Make sure we're never stuck in the still need to scroll state
+        , Task.perform (\_ -> ScrollRecheckRequested) (Process.sleep 20) -- Make sure we're never stuck in the still need to scroll state
         ]
 
 
@@ -1116,7 +1209,7 @@ listAttributes showList listId toSelf =
     -- Height needs to be in the element for fast measurement
     , Html.Attributes.style "height" "100%"
     , Html.Attributes.style "overflow" "auto"
-    , onScroll (toSelf Scrolled)
+    , onScroll (toSelf << Scrolled)
     ]
         ++ (if not showList then
                 [ Html.Attributes.style "visibility" "hidden" ]
@@ -1179,9 +1272,9 @@ slice start end list =
         |> List.take (end - start)
 
 
-onScroll : msg -> Html.Attribute msg
-onScroll msg =
-    on "scroll" (Decode.succeed msg)
+onScroll : (Float -> msg) -> Html.Attribute msg
+onScroll toMsg =
+    on "scroll" (Decode.map toMsg (Decode.at [ "target", "scrollTop" ] Decode.float))
 
 
 measureViewport : String -> Cmd Msg
