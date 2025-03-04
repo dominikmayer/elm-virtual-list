@@ -269,34 +269,10 @@ initWithConfig : Config -> Model
 initWithConfig options =
     let
         settings =
-            { listId =
-                if String.isEmpty options.listId then
-                    defaultConfig.listId
-
-                else
-                    options.listId
-            , defaultItemHeight =
-                if options.defaultItemHeight >= 0 then
-                    options.defaultItemHeight
-
-                else
-                    defaultConfig.defaultItemHeight
-            , baseBuffer =
-                if options.buffer >= 0 then
-                    options.buffer
-
-                else
-                    0
-            , dynamicBuffer = options.dynamicBuffer
-            , showListDuringMeasurement = options.showListDuringMeasurement
-            }
+            validateConfig options
 
         validHeight =
-            if options.initialHeight >= 0 then
-                options.initialHeight
-
-            else
-                defaultConfig.initialHeight
+            ensurePositiveOr defaultConfig.initialHeight options.initialHeight
 
         estimatedVisibleCount =
             ceiling (validHeight / settings.defaultItemHeight)
@@ -320,6 +296,35 @@ initWithConfig options =
             , scrollTop = 0
             }
     }
+
+
+validateConfig : Config -> Settings
+validateConfig config =
+    { listId =
+        if String.isEmpty config.listId then
+            defaultConfig.listId
+
+        else
+            config.listId
+    , defaultItemHeight = ensurePositiveOr defaultConfig.defaultItemHeight config.defaultItemHeight
+    , baseBuffer = ensurePositive config.buffer
+    , dynamicBuffer = config.dynamicBuffer
+    , showListDuringMeasurement = config.showListDuringMeasurement
+    }
+
+
+ensurePositive : number -> number
+ensurePositive number =
+    ensurePositiveOr 0 number
+
+
+ensurePositiveOr : number -> number -> number
+ensurePositiveOr fallback number =
+    if number >= 0 then
+        number
+
+    else
+        fallback
 
 
 type alias RowHeight =
