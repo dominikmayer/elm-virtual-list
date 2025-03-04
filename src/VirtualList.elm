@@ -972,15 +972,12 @@ scrollToKnownItem model scrollState =
             { model
                 | scrollState = InProgress newScrollState
             }
-
-        ( newModel, cmd ) =
-            if log "rowIsMeasured" rowIsMeasured then
-                ( newModelPre, scrollCmdForKnownTarget newModelPre newScrollState.targetIndex newScrollState.alignment )
-
-            else
-                ( newModelPre, requestRowMeasurement scrollState.targetIndex )
     in
-    ( newModel, cmd )
+    if log "rowIsMeasured" rowIsMeasured then
+        ( newModelPre, scrollCmdForKnownTarget newModelPre newScrollState.targetIndex newScrollState.alignment )
+
+    else
+        ( newModelPre, requestRowMeasurement scrollState.targetIndex )
 
 
 startScrollInNextUpdateCycle : Model -> String -> Alignment -> ( Model, Cmd Msg )
