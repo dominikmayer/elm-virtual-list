@@ -590,8 +590,12 @@ setItemsAndRemeasure model { newIds, idsToRemeasure } =
                 model.rowHeights
                 model.settings.defaultItemHeight
                 |> updateModelWithNewItems model newIds
+
+        checkVisibilityCmd =
+            -- Showing list if no scroll in progress
+            Task.perform (\_ -> ScrollRecheckRequested) (Process.sleep 100)
     in
-    ( newModel |> setListVisibility, cmd )
+    ( newModel |> setListVisibility, Cmd.batch [ cmd, checkVisibilityCmd ] )
 
 
 updateModelWithNewItems : Model -> List String -> Dict Int RowHeight -> ( Model, Cmd Msg )
