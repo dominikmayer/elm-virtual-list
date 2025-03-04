@@ -170,7 +170,11 @@ defaultConfig =
 You **create** one with the `init` function.
 
 -}
-type alias Model =
+type Model
+    = Model InternalModel
+
+
+type alias InternalModel =
     { itemIds : List String
     , currentBuffer : Int
     , listIsVisible : Bool
@@ -215,6 +219,11 @@ type alias Viewport =
     }
 
 
+toModel : ( InternalModel, Cmd Msg ) -> ( Model, Cmd Msg )
+toModel ( model, cmd ) =
+    ( Model model, cmd )
+
+
 {-| Initializes a virtual list model using the **default configuration.**
 -}
 init : Model
@@ -247,22 +256,23 @@ initWithConfig options =
         initialVisibleRows =
             ( 0, estimatedVisibleCount + settings.baseBuffer )
     in
-    { itemIds = []
-    , currentBuffer = settings.baseBuffer
-    , listIsVisible = options.showListDuringMeasurement
-    , visibleRows = initialVisibleRows
-    , unmeasuredRows = Set.empty
-    , rowHeights = Dict.empty
-    , cumulativeRowHeights = Dict.empty
-    , settings = settings
-    , scrollState = NoScroll
-    , viewport =
-        Unmeasured
-            { height = validHeight
-            , previousScrollTop = 0
-            , scrollTop = 0
-            }
-    }
+    Model
+        { itemIds = []
+        , currentBuffer = settings.baseBuffer
+        , listIsVisible = options.showListDuringMeasurement
+        , visibleRows = initialVisibleRows
+        , unmeasuredRows = Set.empty
+        , rowHeights = Dict.empty
+        , cumulativeRowHeights = Dict.empty
+        , settings = settings
+        , scrollState = NoScroll
+        , viewport =
+            Unmeasured
+                { height = validHeight
+                , previousScrollTop = 0
+                , scrollTop = 0
+                }
+        }
 
 
 validateConfig : Config -> Settings
@@ -338,13 +348,13 @@ You must **integrate** this into your `update` function and map the result back 
 
 -}
 update : Msg -> Model -> ( Model, Cmd Msg )
-update msg model =
+update msg ((Model model) as externalModel) =
     case msg of
         NoOp ->
-            ( model, Cmd.none )
+            ( Model model, Cmd.none )
 
         RowElementReceived index result ->
-            measureElementAndScroll model index result
+            measureElementAndScroll model index result |> toModel
 
         Scrolled scrollTop ->
             let
@@ -358,16 +368,17 @@ update msg model =
                 , Task.perform (\_ -> ScrollStopCheckRequested scrollTop) (Process.sleep 200)
                 ]
             )
+                |> toModel
 
         ScrollRecheckRequested ->
-            continueScrollToTarget model
+            continueScrollToTarget model |> toModel
 
         ScrollStartRequested id alignment ->
             let
                 _ =
                     log "ScrollStartRequested" id
             in
-            scrollToItem model id alignment
+            scrollToItem externalModel id alignment
 
         ScrollStopCheckRequested scrollTop ->
             let
@@ -375,16 +386,16 @@ update msg model =
                     Measurable.value model.viewport
             in
             if scrollTop == viewport.scrollTop then
-                ( { model | scrollState = log "scrollRecheck" NoScroll }, Cmd.none )
+                ( { model | scrollState = log "scrollRecheck" NoScroll }, Cmd.none ) |> toModel
 
             else
-                ( model, Cmd.none )
+                ( Model model, Cmd.none )
 
         ViewportUpdated result ->
-            handleViewportChange model result
+            handleViewportChange model result |> toModel
 
 
-updateScroll : Model -> Float -> Model
+updateScroll : InternalModel -> Float -> InternalModel
 updateScroll model newScrollTop =
     let
         _ =
@@ -401,7 +412,7 @@ updateScroll model newScrollTop =
         |> updateBuffer
 
 
-updateScrollTop : Model -> Float -> Model
+updateScrollTop : InternalModel -> Float -> InternalModel
 updateScrollTop model newScrollTop =
     { model | viewport = setScrollTop model.viewport newScrollTop }
 
@@ -416,12 +427,12 @@ setScrollTop measurableViewport newScrollTop =
             Measured { viewport | previousScrollTop = viewport.scrollTop, scrollTop = newScrollTop }
 
 
-updateBuffer : Model -> Model
+updateBuffer : InternalModel -> InternalModel
 updateBuffer model =
     { model | currentBuffer = calculateBuffer model }
 
 
-calculateBuffer : Model -> Int
+calculateBuffer : InternalModel -> Int
 calculateBuffer model =
     if model.settings.dynamicBuffer && model.scrollState == ManualScroll then
         Measurable.value model.viewport
@@ -441,7 +452,7 @@ scrollSpeed viewport =
     abs (viewport.scrollTop - viewport.previousScrollTop)
 
 
-continueScrollToTarget : Model -> ( Model, Cmd Msg )
+continueScrollToTarget : InternalModel -> ( InternalModel, Cmd Msg )
 continueScrollToTarget model =
     case model.scrollState of
         InProgress scrollState ->
@@ -461,7 +472,7 @@ continueScrollToTarget model =
             ( { model | listIsVisible = True }, Cmd.none )
 
 
-processScroll : Model -> InProgressScrollState -> ( Model, Cmd Msg )
+processScroll : InternalModel -> InProgressScrollState -> ( InternalModel, Cmd Msg )
 processScroll model scrollState =
     let
         viewport =
@@ -579,7 +590,7 @@ This is useful when only a **subset of items** might have changed in height.
 
 -}
 setItemsAndRemeasure : Model -> { newIds : List String, idsToRemeasure : List String } -> ( Model, Cmd Msg )
-setItemsAndRemeasure model { newIds, idsToRemeasure } =
+setItemsAndRemeasure (Model model) { newIds, idsToRemeasure } =
     let
         ( newModel, cmd ) =
             getRowHeightsFromCache
@@ -595,10 +606,10 @@ setItemsAndRemeasure model { newIds, idsToRemeasure } =
             -- Showing list if no scroll in progress
             Task.perform (\_ -> ScrollRecheckRequested) (Process.sleep 100)
     in
-    ( newModel |> setListVisibility, Cmd.batch [ cmd, checkVisibilityCmd ] )
+    ( newModel |> setListVisibility |> Model, Cmd.batch [ cmd, checkVisibilityCmd ] )
 
 
-updateModelWithNewItems : Model -> List String -> Dict Int RowHeight -> ( Model, Cmd Msg )
+updateModelWithNewItems : InternalModel -> List String -> Dict Int RowHeight -> ( InternalModel, Cmd Msg )
 updateModelWithNewItems model ids updatedRowHeights =
     ( { model
         | itemIds = ids
@@ -669,7 +680,7 @@ insertCumulativeHeight index rowHeight ( cumulativeHeights, cumulative ) =
     ( Dict.insert index cumulativeHeight cumulativeHeights, cumulativeHeight )
 
 
-calculateVisibleRows : Model -> ( Int, Int )
+calculateVisibleRows : InternalModel -> ( Int, Int )
 calculateVisibleRows model =
     let
         viewport =
@@ -701,7 +712,7 @@ calculateVisibleRows model =
     ( max 0 (start - buffer), min itemCount (end + buffer) )
 
 
-measureElementAndScroll : Model -> Int -> Result Browser.Dom.Error Browser.Dom.Element -> ( Model, Cmd Msg )
+measureElementAndScroll : InternalModel -> Int -> Result Browser.Dom.Error Browser.Dom.Element -> ( InternalModel, Cmd Msg )
 measureElementAndScroll model index result =
     case result of
         Ok element ->
@@ -711,7 +722,7 @@ measureElementAndScroll model index result =
             ( model |> setListVisibility, scrollCloserToTarget model error model.scrollState )
 
 
-scrollCloserToTarget : Model -> Browser.Dom.Error -> ScrollState -> Cmd Msg
+scrollCloserToTarget : InternalModel -> Browser.Dom.Error -> ScrollState -> Cmd Msg
 scrollCloserToTarget model error scrollState =
     case ( error, scrollState ) of
         ( Browser.Dom.NotFound _, InProgress inProgressScrollState ) ->
@@ -721,7 +732,7 @@ scrollCloserToTarget model error scrollState =
             Cmd.none
 
 
-updateRowHeightAndScroll : Model -> Int -> Browser.Dom.Element -> ( Model, Cmd Msg )
+updateRowHeightAndScroll : InternalModel -> Int -> Browser.Dom.Element -> ( InternalModel, Cmd Msg )
 updateRowHeightAndScroll model index element =
     let
         height =
@@ -755,7 +766,7 @@ updateRowHeightAndScroll model index element =
     )
 
 
-handleViewportChange : Model -> Result Browser.Dom.Error Browser.Dom.Viewport -> ( Model, Cmd Msg )
+handleViewportChange : InternalModel -> Result Browser.Dom.Error Browser.Dom.Viewport -> ( InternalModel, Cmd Msg )
 handleViewportChange model result =
     case result of
         Ok viewport ->
@@ -769,7 +780,7 @@ handleViewportChange model result =
             ( model, Cmd.none )
 
 
-updateViewport : Model -> Browser.Dom.Viewport -> Model
+updateViewport : InternalModel -> Browser.Dom.Viewport -> InternalModel
 updateViewport model domViewport =
     let
         oldViewport =
@@ -792,7 +803,7 @@ updateViewport model domViewport =
 --     oldViewport.height /= viewport.viewport.height || oldViewport.scrollTop /= viewport.viewport.y
 
 
-measureVisibleRows : Model -> ( Model, Cmd Msg )
+measureVisibleRows : InternalModel -> ( InternalModel, Cmd Msg )
 measureVisibleRows model =
     let
         (( start, end ) as visibleRows) =
@@ -817,7 +828,7 @@ measureVisibleRows model =
     ( newModel, measureCmds )
 
 
-setListVisibility : Model -> Model
+setListVisibility : InternalModel -> InternalModel
 setListVisibility model =
     if model.listIsVisible then
         { model | listIsVisible = log "should show list" (shouldShowList model) }
@@ -826,7 +837,7 @@ setListVisibility model =
         model
 
 
-shouldShowList : Model -> Bool
+shouldShowList : InternalModel -> Bool
 shouldShowList model =
     if
         model.settings.showListDuringMeasurement
@@ -895,7 +906,7 @@ type Alignment
     | Bottom
 
 
-updateScrollStateWithNewMeasurements : Model -> InProgressScrollState -> InProgressScrollState
+updateScrollStateWithNewMeasurements : InternalModel -> InProgressScrollState -> InProgressScrollState
 updateScrollStateWithNewMeasurements model scrollState =
     let
         newOffset =
@@ -925,20 +936,21 @@ Does nothing if the item is **already visible.**
 
 -}
 scrollToItem : Model -> String -> Alignment -> ( Model, Cmd Msg )
-scrollToItem model id alignment =
+scrollToItem (Model model) id alignment =
     case findIndexForId model.itemIds id of
         Just index ->
             startScrollingToKnownItem model alignment (log "scrollToItem, found" index)
+                |> toModel
 
         Nothing ->
             let
                 _ =
                     log "scrollToItem, not found" id
             in
-            startScrollInNextUpdateCycle model id alignment
+            startScrollInNextUpdateCycle model id alignment |> toModel
 
 
-startScrollingToKnownItem : Model -> Alignment -> Int -> ( Model, Cmd Msg )
+startScrollingToKnownItem : InternalModel -> Alignment -> Int -> ( InternalModel, Cmd Msg )
 startScrollingToKnownItem model alignment index =
     let
         pendingScrollState =
@@ -956,7 +968,7 @@ startScrollingToKnownItem model alignment index =
     scrollToKnownItem newModel pendingScrollState
 
 
-scrollToKnownItem : Model -> InProgressScrollState -> ( Model, Cmd Msg )
+scrollToKnownItem : InternalModel -> InProgressScrollState -> ( InternalModel, Cmd Msg )
 scrollToKnownItem model scrollState =
     let
         rowIsMeasured =
@@ -980,7 +992,7 @@ scrollToKnownItem model scrollState =
         ( newModelPre, requestRowMeasurement scrollState.targetIndex )
 
 
-startScrollInNextUpdateCycle : Model -> String -> Alignment -> ( Model, Cmd Msg )
+startScrollInNextUpdateCycle : InternalModel -> String -> Alignment -> ( InternalModel, Cmd Msg )
 startScrollInNextUpdateCycle model id alignment =
     case log "recheckScroll" model.scrollState of
         SearchingForItem attempts ->
@@ -996,7 +1008,7 @@ startScrollInNextUpdateCycle model id alignment =
             increaseAttemptsAndAttemptScrollInNextUpdateCycle model id alignment 0
 
 
-increaseAttemptsAndAttemptScrollInNextUpdateCycle : Model -> String -> Alignment -> Int -> ( Model, Cmd Msg )
+increaseAttemptsAndAttemptScrollInNextUpdateCycle : InternalModel -> String -> Alignment -> Int -> ( InternalModel, Cmd Msg )
 increaseAttemptsAndAttemptScrollInNextUpdateCycle model id alignment attempts =
     if attempts < Constants.maxScrollRecheckAttempts then
         let
@@ -1018,7 +1030,7 @@ startScrollingInNextUpdateCycle id alignment =
     Task.perform (\_ -> ScrollStartRequested id alignment) (Process.sleep 100)
 
 
-maybePendingScrollCmd : Model -> Cmd Msg
+maybePendingScrollCmd : InternalModel -> Cmd Msg
 maybePendingScrollCmd model =
     case model.scrollState of
         InProgress { targetIndex, alignment } ->
@@ -1034,7 +1046,7 @@ maybePendingScrollCmd model =
             Cmd.none
 
 
-scrollCmdForKnownTarget : Model -> Int -> Alignment -> Cmd Msg
+scrollCmdForKnownTarget : InternalModel -> Int -> Alignment -> Cmd Msg
 scrollCmdForKnownTarget model index alignment =
     let
         elementStart =
@@ -1065,7 +1077,7 @@ scrollCmdForKnownTarget model index alignment =
         Task.perform (\_ -> ScrollRecheckRequested) (Task.succeed ())
 
 
-computeElementStart : Model -> Int -> Float
+computeElementStart : InternalModel -> Int -> Float
 computeElementStart model index =
     case Dict.get (index - 1) model.cumulativeRowHeights of
         Just h ->
@@ -1075,7 +1087,7 @@ computeElementStart model index =
             toFloat index * model.settings.defaultItemHeight
 
 
-needsScrollCorrection : Model -> Float -> Bool
+needsScrollCorrection : InternalModel -> Float -> Bool
 needsScrollCorrection model targetOffset =
     let
         viewport =
@@ -1143,7 +1155,7 @@ In **your code** this would look like this:
 
 -}
 view : (String -> Html msg) -> Model -> (Msg -> msg) -> Html msg
-view renderRow model toSelf =
+view renderRow (Model model) toSelf =
     let
         height =
             String.fromFloat (totalHeight model.cumulativeRowHeights)
@@ -1156,7 +1168,7 @@ view renderRow model toSelf =
         [ renderSpacer height rows ]
 
 
-renderRows : Model -> (String -> Html msg) -> List (Html msg)
+renderRows : InternalModel -> (String -> Html msg) -> List (Html msg)
 renderRows model renderRow =
     let
         ( start, end ) =
