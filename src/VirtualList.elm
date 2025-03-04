@@ -92,6 +92,7 @@ Render the virtual list in your **view:**
 -}
 
 import Browser.Dom
+import Constants
 import Dict exposing (Dict, foldl)
 import Html exposing (Html, div)
 import Html.Attributes
@@ -106,43 +107,9 @@ import Set exposing (Set)
 import Task
 
 
-
--- CONSTANTS
-
-
-maxBufferMultiplier : Int
-maxBufferMultiplier =
-    4
-
-
-maxScrollRecheckAttempts : Int
-maxScrollRecheckAttempts =
-    1
-
-
-maxScrollRetries : Int
-maxScrollRetries =
-    10
-
-
-scrollStabilityThreshold : Int
-scrollStabilityThreshold =
-    2
-
-
-scrollTargetToleranceInPixel : Float
-scrollTargetToleranceInPixel =
-    20
-
-
-showDebugLogs : Bool
-showDebugLogs =
-    False
-
-
 log : String -> a -> a
 log msg value =
-    if showDebugLogs then
+    if Constants.showDebugLogs then
         Debug.log msg value
 
     else
@@ -466,7 +433,7 @@ calculateBuffer model =
 
 calculateDynamicBuffer : Int -> Viewport -> Int
 calculateDynamicBuffer base viewport =
-    base * min maxBufferMultiplier (1 + round (scrollSpeed viewport / 100))
+    base * min Constants.maxBufferMultiplier (1 + round (scrollSpeed viewport / 100))
 
 
 scrollSpeed : Viewport -> Float
@@ -516,7 +483,7 @@ processScroll model scrollState =
             abs (viewport.scrollTop - newTargetOffset)
 
         isClose =
-            scrollOffset <= scrollTargetToleranceInPixel
+            scrollOffset <= Constants.scrollTargetToleranceInPixel
 
         retryCount =
             case model.scrollState of
@@ -530,10 +497,10 @@ processScroll model scrollState =
             retryCount + 1
 
         shouldRetry =
-            newAttempts < maxScrollRetries
+            newAttempts < Constants.maxScrollRetries
 
         stillTooFar =
-            not isVisible && scrollOffset > 1.5 * scrollTargetToleranceInPixel
+            not isVisible && scrollOffset > 1.5 * Constants.scrollTargetToleranceInPixel
 
         logMessage =
             { scrollTop = viewport.scrollTop
@@ -549,7 +516,7 @@ processScroll model scrollState =
             Task.perform (\_ -> ScrollRecheckRequested) (Process.sleep 50)
     in
     if isVisible || isClose then
-        if scrollState.stableCount >= scrollStabilityThreshold then
+        if scrollState.stableCount >= Constants.scrollStabilityThreshold then
             log "✅ Scrolling Done" logMessage
                 |> (\_ -> ( { model | scrollState = NoScroll, listIsVisible = True }, cmd ))
 
@@ -933,7 +900,7 @@ updateScrollStateWithNewMeasurements model scrollState =
         delta =
             abs (newOffset - scrollState.targetOffset)
     in
-    if delta > scrollTargetToleranceInPixel then
+    if delta > Constants.scrollTargetToleranceInPixel then
         { scrollState | targetOffset = newOffset }
 
     else
@@ -1030,7 +997,7 @@ startScrollInNextUpdateCycle model id alignment =
 
 increaseAttemptsAndAttemptScrollInNextUpdateCycle : Model -> String -> Alignment -> Int -> ( Model, Cmd Msg )
 increaseAttemptsAndAttemptScrollInNextUpdateCycle model id alignment attempts =
-    if attempts < maxScrollRecheckAttempts then
+    if attempts < Constants.maxScrollRecheckAttempts then
         let
             newAttempts =
                 attempts + 1
