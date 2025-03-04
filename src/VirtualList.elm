@@ -204,20 +204,25 @@ You **create** one with the `init` function.
 
 -}
 type alias Model =
-    { listId : String
-    , itemIds : List String
-    , defaultItemHeight : Float
-    , baseBuffer : Int
-    , dynamicBuffer : Bool
+    { itemIds : List String
     , currentBuffer : Int
-    , showListDuringMeasurement : Bool
     , listIsVisible : Bool
     , visibleRows : ( Int, Int )
     , unmeasuredRows : Set Int
     , rowHeights : Dict Int RowHeight
     , cumulativeRowHeights : Dict Int Float
     , scrollState : ScrollState
+    , settings : Settings
     , viewport : Measurable Viewport
+    }
+
+
+type alias Settings =
+    { listId : String
+    , defaultItemHeight : Float
+    , baseBuffer : Int
+    , dynamicBuffer : Bool
+    , showListDuringMeasurement : Bool
     }
 
 
@@ -263,12 +268,28 @@ You can **modify** the default configuration:
 initWithConfig : Config -> Model
 initWithConfig options =
     let
-        validListId =
-            if String.isEmpty options.listId then
-                defaultConfig.listId
+        settings =
+            { listId =
+                if String.isEmpty options.listId then
+                    defaultConfig.listId
 
-            else
-                options.listId
+                else
+                    options.listId
+            , defaultItemHeight =
+                if options.defaultItemHeight >= 0 then
+                    options.defaultItemHeight
+
+                else
+                    defaultConfig.defaultItemHeight
+            , baseBuffer =
+                if options.buffer >= 0 then
+                    options.buffer
+
+                else
+                    0
+            , dynamicBuffer = options.dynamicBuffer
+            , showListDuringMeasurement = options.showListDuringMeasurement
+            }
 
         validHeight =
             if options.initialHeight >= 0 then
@@ -277,38 +298,20 @@ initWithConfig options =
             else
                 defaultConfig.initialHeight
 
-        validBuffer =
-            if options.buffer >= 0 then
-                options.buffer
-
-            else
-                0
-
-        validDefaultItemHeight =
-            if options.defaultItemHeight >= 0 then
-                options.defaultItemHeight
-
-            else
-                defaultConfig.defaultItemHeight
-
         estimatedVisibleCount =
-            ceiling (validHeight / validDefaultItemHeight)
+            ceiling (validHeight / settings.defaultItemHeight)
 
         initialVisibleRows =
-            ( 0, estimatedVisibleCount + validBuffer )
+            ( 0, estimatedVisibleCount + settings.baseBuffer )
     in
-    { listId = validListId
-    , itemIds = []
-    , baseBuffer = validBuffer
-    , dynamicBuffer = options.dynamicBuffer
-    , currentBuffer = validBuffer
-    , showListDuringMeasurement = options.showListDuringMeasurement
+    { itemIds = []
+    , currentBuffer = settings.baseBuffer
     , listIsVisible = options.showListDuringMeasurement
-    , defaultItemHeight = validDefaultItemHeight
     , visibleRows = initialVisibleRows
     , unmeasuredRows = Set.empty
     , rowHeights = Dict.empty
     , cumulativeRowHeights = Dict.empty
+    , settings = settings
     , scrollState = NoScroll
     , viewport =
         Unmeasured
@@ -448,9 +451,9 @@ updateBuffer model =
 
 calculateBuffer : Model -> Int
 calculateBuffer model =
-    if model.dynamicBuffer && model.scrollState == ManualScroll then
+    if model.settings.dynamicBuffer && model.scrollState == ManualScroll then
         Measurable.value model.viewport
-            |> calculateDynamicBuffer model.baseBuffer
+            |> calculateDynamicBuffer model.settings.baseBuffer
 
     else
         model.currentBuffer
@@ -613,7 +616,7 @@ setItemsAndRemeasure model { newIds, idsToRemeasure } =
                 , idsToRemeasure = idsToRemeasure
                 }
                 model.rowHeights
-                model.defaultItemHeight
+                model.settings.defaultItemHeight
                 |> updateModelWithNewItems model newIds
     in
     ( newModel |> setListVisibility, cmd )
@@ -626,7 +629,7 @@ updateModelWithNewItems model ids updatedRowHeights =
         , cumulativeRowHeights = calculateCumulativeRowHeights updatedRowHeights
         , rowHeights = updatedRowHeights
       }
-    , measureViewport (log "measureViewport from updateModelWithNewItems" model.listId)
+    , measureViewport (log "measureViewport from updateModelWithNewItems" model.settings.listId)
     )
 
 
@@ -703,7 +706,7 @@ calculateVisibleRows model =
             List.length model.itemIds
 
         height index =
-            Maybe.withDefault model.defaultItemHeight (Dict.get index model.cumulativeRowHeights)
+            Maybe.withDefault model.settings.defaultItemHeight (Dict.get index model.cumulativeRowHeights)
 
         start =
             keys
@@ -850,7 +853,7 @@ setListVisibility model =
 shouldShowList : Model -> Bool
 shouldShowList model =
     if
-        model.showListDuringMeasurement
+        model.settings.showListDuringMeasurement
             || (log "scroll" model.scrollState == ManualScroll)
     then
         True
@@ -1078,7 +1081,7 @@ scrollCmdForKnownTarget model index alignment =
     in
     if scrollNeeded then
         scrollToPosition
-            { listId = model.listId
+            { listId = model.settings.listId
             , elementStart = elementStart
             , containerHeight = containerHeight
             , nextElementStart = Dict.get index model.cumulativeRowHeights
@@ -1096,7 +1099,7 @@ computeElementStart model index =
             h
 
         Nothing ->
-            toFloat index * model.defaultItemHeight
+            toFloat index * model.settings.defaultItemHeight
 
 
 needsScrollCorrection : Model -> Float -> Bool
@@ -1176,7 +1179,7 @@ view renderRow model toSelf =
             renderRows model renderRow
     in
     div
-        (listAttributes model.listIsVisible model.listId toSelf)
+        (listAttributes model.listIsVisible model.settings.listId toSelf)
         [ renderSpacer height rows ]
 
 
