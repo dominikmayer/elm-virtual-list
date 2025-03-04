@@ -28,4 +28,4 @@ scrollTargetToleranceInPixel =
 
 showDebugLogs : Bool
 showDebugLogs =
-    True
+    False
