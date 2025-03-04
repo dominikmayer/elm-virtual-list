@@ -219,8 +219,8 @@ type alias Viewport =
     }
 
 
-toModel : ( InternalModel, Cmd Msg ) -> ( Model, Cmd Msg )
-toModel ( model, cmd ) =
+externalize : ( InternalModel, Cmd Msg ) -> ( Model, Cmd Msg )
+externalize ( model, cmd ) =
     ( Model model, cmd )
 
 
@@ -354,7 +354,7 @@ update msg ((Model model) as externalModel) =
             ( Model model, Cmd.none )
 
         RowElementReceived index result ->
-            measureElementAndScroll model index result |> toModel
+            measureElementAndScroll model index result |> externalize
 
         Scrolled scrollTop ->
             let
@@ -368,10 +368,10 @@ update msg ((Model model) as externalModel) =
                 , Task.perform (\_ -> ScrollStopCheckRequested scrollTop) (Process.sleep 200)
                 ]
             )
-                |> toModel
+                |> externalize
 
         ScrollRecheckRequested ->
-            continueScrollToTarget model |> toModel
+            continueScrollToTarget model |> externalize
 
         ScrollStartRequested id alignment ->
             let
@@ -386,13 +386,13 @@ update msg ((Model model) as externalModel) =
                     Measurable.value model.viewport
             in
             if scrollTop == viewport.scrollTop then
-                ( { model | scrollState = log "scrollRecheck" NoScroll }, Cmd.none ) |> toModel
+                ( { model | scrollState = log "scrollRecheck" NoScroll }, Cmd.none ) |> externalize
 
             else
                 ( Model model, Cmd.none )
 
         ViewportUpdated result ->
-            handleViewportChange model result |> toModel
+            handleViewportChange model result |> externalize
 
 
 updateScroll : InternalModel -> Float -> InternalModel
@@ -940,14 +940,14 @@ scrollToItem (Model model) id alignment =
     case findIndexForId model.itemIds id of
         Just index ->
             startScrollingToKnownItem model alignment (log "scrollToItem, found" index)
-                |> toModel
+                |> externalize
 
         Nothing ->
             let
                 _ =
                     log "scrollToItem, not found" id
             in
-            startScrollInNextUpdateCycle model id alignment |> toModel
+            startScrollInNextUpdateCycle model id alignment |> externalize
 
 
 startScrollingToKnownItem : InternalModel -> Alignment -> Int -> ( InternalModel, Cmd Msg )
