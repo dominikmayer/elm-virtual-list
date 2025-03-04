@@ -1,6 +1,6 @@
 # Virtual List
 
-VirtualList is an Elm module for **efficiently displaying large lists** by rendering only the visible items within the viewport, plus a configurable buffer. It dynamically measures the height of displayed elements to ensure smooth scrolling and performance.s
+VirtualList is an Elm module for **efficiently displaying large lists** by rendering only the visible items within the viewport, plus a configurable buffer. It dynamically measures the height of displayed elements to ensure smooth scrolling and performance.
 
 ## Features
 
