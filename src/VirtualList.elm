@@ -1,15 +1,15 @@
 module VirtualList exposing
-    ( Model, defaultConfig, init, initWithConfig, Msg, update
+    ( Model, init, initWithConfig, Msg, update
     , view
     , setItems, setItemsAndRemeasureAll, setItemsAndRemeasure
     , scrollToItem, Alignment(..)
     )
 
-{-| Efficiently displays large lists by **only rendering the visible items** within the viewport, plus a configurable buffer.
+{-| Efficiently displays large lists by **rendering only visible items** plus a configurable buffer.
 
 It does so by **dynamically measuring** the height of the displayed elements.
 
-In case you **know the heights in advance** you might get a better performance by using [`FabienHenon/elm-infinite-list-view`](https://package.elm-lang.org/packages/FabienHenon/elm-infinite-list-view/latest/).
+If item heights are **known in advance,** consider [`FabienHenon/elm-infinite-list-view`](https://package.elm-lang.org/packages/FabienHenon/elm-infinite-list-view/latest/) for better performance.
 
 
 ## Usage
@@ -72,7 +72,7 @@ Render the virtual list in your **view:**
 
 # Model & Initialization
 
-@docs Model, defaultConfig, init, initWithConfig, Msg, update
+@docs Model, init, initWithConfig, Msg, update
 
 
 # Rendering
@@ -80,7 +80,7 @@ Render the virtual list in your **view:**
 @docs view
 
 
-# Updating the Items
+# Setting and Updating the Items
 
 @docs setItems, setItemsAndRemeasureAll, setItemsAndRemeasure
 
@@ -105,6 +105,7 @@ import Measurable exposing (Measurable(..))
 import Process
 import Set exposing (Set)
 import Task
+import VirtualList.Config as Config exposing (Config(..))
 
 
 log : String -> a -> a
@@ -116,50 +117,7 @@ log msg value =
         value
 
 
-type alias Config =
-    { listId : String
-    , initialHeight : Float
-    , defaultItemHeight : Float
-    , showListDuringMeasurement : Bool
-    , buffer : Int
-    , dynamicBuffer : Bool
-    }
-
-
-{-| Provides a **default configuration** with sensible initial values.
-
-  - **`listId`:** The ID of the list container in the DOM.
-  - **`initialHeight`:** Estimated height of the list before it is measured.
-  - **`defaultItemHeight`:** Default height assigned to items before they are measured.
-  - **`showListDuringMeasurement`:** If `True`, the list is visible while measuring (potentially causing spacing issues).
-  - **`buffer`:** Number of items rendered outside the visible range to ensure smooth scrolling.
-  - **`dynamicBuffer`:** If `True`, increases buffer size when scrolling quickly.
-
-```
-defaultConfig : Config
-defaultConfig =
-    { listId = "virtual-list"
-    , initialHeight = 500
-    , defaultItemHeight = 26
-    , showListDuringMeasurement = False
-    , buffer = 5
-    , dynamicBuffer = True
-    }
-```
-
--}
-defaultConfig : Config
-defaultConfig =
-    { listId = "virtual-list"
-    , initialHeight = 500
-    , defaultItemHeight = 26
-    , showListDuringMeasurement = False
-    , buffer = 5
-    , dynamicBuffer = True
-    }
-
-
-{-| `Model` for maintaining the **virtual list state.** You need to include it in your model:
+{-| The `Model` stores the **virtual list’s state.** Include it in your application’s model:
 
     type alias Model =
         { virtualList : VirtualList.Model
@@ -167,7 +125,7 @@ defaultConfig =
         -- other fields
         }
 
-You **create** one with the `init` function.
+You **create** one with the [`init`](VirtualList#init) function.
 
 -}
 type Model
@@ -224,34 +182,37 @@ externalize ( model, cmd ) =
     ( Model model, cmd )
 
 
-{-| Initializes a virtual list model using the **default configuration.**
+{-| Initializes a virtual list model with the **[default configuration](VirtualList.Config#default).**
 -}
 init : Model
 init =
-    initWithConfig defaultConfig
+    initWithConfig Config.default
 
 
-{-| Initializes a virtual list model using a **custom configuration.**
+{-| Initializes a virtual list model with a **custom configuration.**
 
-    initWithConfig defaultConfig
+    initWithConfig VirtualList.Config.default
 
-You can **modify** the default configuration:
+You can [**modify**](VirtualList.Config) the default configuration:
 
-    config =
-        { defaultConfig | buffer = 10 }
+    config = initWithConfig VirtualList.Config.default
+        |> VirtualList.Config.setInitialHeight 650
+        |> VirtualList.Config.setBuffer 10
+
+    initWithConfig config
 
 -}
 initWithConfig : Config -> Model
-initWithConfig options =
+initWithConfig config =
     let
         settings =
-            validateConfig options
+            validateConfig config
 
-        validHeight =
-            ensurePositiveOr defaultConfig.initialHeight options.initialHeight
+        initialHeight =
+            Config.getInitialHeight config
 
         estimatedVisibleCount =
-            ceiling (validHeight / settings.defaultItemHeight)
+            ceiling (initialHeight / settings.defaultItemHeight)
 
         initialVisibleRows =
             ( 0, estimatedVisibleCount + settings.baseBuffer )
@@ -259,7 +220,7 @@ initWithConfig options =
     Model
         { itemIds = []
         , currentBuffer = settings.baseBuffer
-        , listIsVisible = options.showListDuringMeasurement
+        , listIsVisible = Config.getShowListDuringMeasurement config
         , visibleRows = initialVisibleRows
         , unmeasuredRows = Set.empty
         , rowHeights = Dict.empty
@@ -268,7 +229,7 @@ initWithConfig options =
         , scrollState = NoScroll
         , viewport =
             Unmeasured
-                { height = validHeight
+                { height = initialHeight
                 , previousScrollTop = 0
                 , scrollTop = 0
                 }
@@ -277,40 +238,21 @@ initWithConfig options =
 
 validateConfig : Config -> Settings
 validateConfig config =
-    { listId =
-        if String.isEmpty config.listId then
-            defaultConfig.listId
-
-        else
-            config.listId
-    , defaultItemHeight = ensurePositiveOr defaultConfig.defaultItemHeight config.defaultItemHeight
-    , baseBuffer = ensurePositive config.buffer
-    , dynamicBuffer = config.dynamicBuffer
-    , showListDuringMeasurement = config.showListDuringMeasurement
+    { listId = Config.getListId config
+    , defaultItemHeight = Config.getDefaultItemHeight config
+    , baseBuffer = Config.getBuffer config
+    , dynamicBuffer = Config.getDynamicBuffer config
+    , showListDuringMeasurement = Config.getShowListDuringMeasurement config
     }
-
-
-ensurePositive : number -> number
-ensurePositive number =
-    ensurePositiveOr 0 number
-
-
-ensurePositiveOr : number -> number -> number
-ensurePositiveOr fallback number =
-    if number >= 0 then
-        number
-
-    else
-        fallback
 
 
 type alias RowHeight =
     Measurable Float
 
 
-{-| **Messages** handled by the virtual list.
+{-| **Messages** used by the virtual list.
 
-You need to **include** `VirtualList.Msg` in your app’s `Msg` type and handle it in `update`.
+**Add** `VirtualList.Msg` to your app’s `Msg` type and handle it in `update`.
 
 
     type Msg
@@ -329,9 +271,9 @@ type Msg
     | ViewportUpdated (Result Browser.Dom.Error Browser.Dom.Viewport)
 
 
-{-| **Updates** the virtual list model in response to messages.
+{-| **Updates** the virtual list model based on received messages.
 
-You must **integrate** this into your `update` function and map the result back to your own `Msg`.
+**Integrate** this into your `update` function and map the result back to your app’s `Msg`.
 
 
     update : Msg -> Model -> ( Model, Cmd Msg )
@@ -558,9 +500,9 @@ processScroll model scrollState =
             |> (\_ -> ( { model | scrollState = NoScroll, listIsVisible = True }, Cmd.none ))
 
 
-{-| Updates the **list of items** displayed in the virtual list.
+{-| Updates the **list of displayed items**.
 
-Only **new items** are considered for measurement; existing items retain their cached heights.
+Only **new items** are measured; existing ones retain cached heights.
 
     VirtualList.setItems model.virtualList ids
 
@@ -570,9 +512,9 @@ setItems model newIds =
     setItemsAndRemeasure model { newIds = newIds, idsToRemeasure = [] }
 
 
-{-| Same as `setItems`, but allows **remeasuring** the entire list.
+{-| Like [`setItems`](VirtualList#setItems), but **remeasures** all items.
 
-Use this when item heights may have **changed.**
+Use this if item heights have **changed.**
 
     VirtualList.setItemsAndRemeasureAll model.virtualList newIds
 
@@ -582,9 +524,9 @@ setItemsAndRemeasureAll model newIds =
     setItemsAndRemeasure model { newIds = newIds, idsToRemeasure = newIds }
 
 
-{-| Same as `setItems`, but allows specifying which **items should be remeasured.**
+{-| Like [`setItems`](VirtualList#setItems), but **selectively remeasures** specific items
 
-This is useful when only a **subset of items** might have changed in height.
+Useful when only **some items** may have changed in height.
 
     VirtualList.setItemsAndRemeasure model.virtualList { newIds = newIds, idsToRemeasure = changedIds }
 
@@ -890,14 +832,14 @@ rowId index =
     "virtual-list-item-" ++ String.fromInt index
 
 
-{-| Defines where an item should **appear in the viewport** when scrolled to.
+{-| Defines an item’s **position in the viewport** when scrolled to.
 
 
 ### Variants:
 
-  - **`Top`:** Scrolls the item to the top.
-  - **`Center`:** Scrolls the item to the center.
-  - **`Bottom`:** Scrolls the item to the bottom.
+  - **`Top`:** Aligns the item to the top.
+  - **`Center`:** Centers the item.
+  - **`Bottom`:** Aligns the item to the bottom.
 
 -}
 type Alignment
@@ -922,9 +864,7 @@ updateScrollStateWithNewMeasurements model scrollState =
         scrollState
 
 
-{-| Scrolls to the **specified item** in the virtual list.
-
-Does nothing if the item is **already visible.**
+{-| Scrolls to the **specified item** unless it is already visible.
 
     let
         ( newVirtualList, virtualListCmd ) =
@@ -1137,19 +1077,19 @@ scrollToPosition position =
 
 You **provide** it with
 
-  - **function** that renders an item given its ID,
-  - the virtual list **`Model`** and
+  - a **function** that renders an item given its ID,
+  - the virtual list **`Model`,** and
   - the virtual list **message** type on your side.
 
-In **your code** this would look like this:
+```
+view : Model -> Html Msg
+view model =
+    VirtualList.view (renderRow model) model.virtualList VirtualListMsg
 
-    view : Model -> Html Msg
-    view model =
-        VirtualList.view (renderRow model) model.virtualList VirtualListMsg
-
-    renderRow : Model -> String -> Html Msg
-    renderRow model id =
-        div [] [ text id ]
+renderRow : Model -> String -> Html Msg
+renderRow model id =
+    div [] [ text id ]
+```
 
 `renderRow` is executed **lazily.**
 
