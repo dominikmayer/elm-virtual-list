@@ -1,9 +1,9 @@
 {
 	"type": "package",
 	"name": "dominikmayer/elm-virtual-list",
-	"summary": "Efficient virtual scrolling for large lists.",
+	"summary": "Efficient virtual scrolling for large lists with varying item heights.",
 	"license": "BSD-3-Clause",
-	"version": "1.0.0",
+	"version": "2.0.0",
 	"exposed-modules": ["VirtualList", "VirtualList.Config"],
 	"elm-version": "0.19.1 <= v < 0.20.0",
 	"dependencies": {
