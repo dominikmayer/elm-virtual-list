@@ -405,7 +405,8 @@ continueScrollToTarget model =
             processScroll model updatedScrollState
 
         ManualScroll ->
-            ( model, Cmd.none )
+            -- This would happen if the list size changes and the changed position would be seen as a manual scroll
+            ( { model | listIsVisible = True }, Cmd.none )
 
         SearchingForItem _ ->
             ( model, Cmd.none )
@@ -534,7 +535,7 @@ Useful when only **some items** may have changed in height.
 setItemsAndRemeasure : Model -> { newIds : List String, idsToRemeasure : List String } -> ( Model, Cmd Msg )
 setItemsAndRemeasure (Model model) { newIds, idsToRemeasure } =
     let
-        ( newModel, cmd ) =
+        ( newModelPre, cmd ) =
             getRowHeightsFromCache
                 { oldIds = model.itemIds
                 , newIds = newIds
@@ -544,11 +545,16 @@ setItemsAndRemeasure (Model model) { newIds, idsToRemeasure } =
                 model.settings.defaultItemHeight
                 |> updateModelWithNewItems model newIds
 
+        newModel =
+            newModelPre
+                |> setListVisibility
+                |> Model
+
         checkVisibilityCmd =
             -- Showing list if no scroll in progress
             Task.perform (\_ -> ScrollRecheckRequested) (Process.sleep 100)
     in
-    ( newModel |> setListVisibility |> Model, Cmd.batch [ cmd, checkVisibilityCmd ] )
+    ( newModel, Cmd.batch [ cmd, checkVisibilityCmd ] )
 
 
 updateModelWithNewItems : InternalModel -> List String -> Dict Int RowHeight -> ( InternalModel, Cmd Msg )
@@ -788,11 +794,11 @@ shouldShowList model =
         True
 
     else
-        log "unmeasured items" (unmeasuredItemsInVisibleArea model.visibleRows model.rowHeights)
+        log "no unmeasured items" (noUnmeasuredItemsInVisibleArea model.visibleRows model.rowHeights)
 
 
-unmeasuredItemsInVisibleArea : ( Int, Int ) -> Dict Int RowHeight -> Bool
-unmeasuredItemsInVisibleArea visibleRows rowHeights =
+noUnmeasuredItemsInVisibleArea : ( Int, Int ) -> Dict Int RowHeight -> Bool
+noUnmeasuredItemsInVisibleArea visibleRows rowHeights =
     let
         ( start, end ) =
             visibleRows
