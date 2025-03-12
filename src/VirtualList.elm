@@ -97,7 +97,7 @@ import Dict exposing (Dict, foldl)
 import Html exposing (Html, div)
 import Html.Attributes
 import Html.Events exposing (on)
-import Html.Lazy exposing (lazy2)
+import Html.Lazy exposing (lazy3)
 import Json.Decode as Decode
 import List
 import List.Extra
@@ -1128,9 +1128,12 @@ renderRows model renderRow =
             let
                 globalIndex =
                     start + localIndex
+
+                hidden =
+                    isUnmeasured model.rowHeights globalIndex
             in
             renderRow id
-                |> renderLazyVirtualRow globalIndex model.cumulativeRowHeights
+                |> renderLazyVirtualRow globalIndex model.cumulativeRowHeights hidden
         )
         visibleItems
 
@@ -1176,8 +1179,8 @@ renderSpacer height rows =
         rows
 
 
-renderLazyVirtualRow : Int -> Dict Int Float -> Html msg -> Html msg
-renderLazyVirtualRow index cumulativeHeights renderRow =
+renderLazyVirtualRow : Int -> Dict Int Float -> Bool -> Html msg -> Html msg
+renderLazyVirtualRow index cumulativeHeights hidden renderRow =
     let
         top =
             Maybe.withDefault 0 (Dict.get (index - 1) cumulativeHeights)
@@ -1185,17 +1188,24 @@ renderLazyVirtualRow index cumulativeHeights renderRow =
         id =
             rowId index
     in
-    lazy2 (renderVirtualRow renderRow) id top
+    lazy3 (renderVirtualRow renderRow) id hidden top
 
 
-renderVirtualRow : Html msg -> String -> Float -> Html msg
-renderVirtualRow renderRow id top =
+renderVirtualRow : Html msg -> String -> Bool -> Float -> Html msg
+renderVirtualRow renderRow id hidden top =
     div
-        [ Html.Attributes.id id
-        , Html.Attributes.style "transform" ("translateY(" ++ String.fromFloat top ++ "px)")
-        , Html.Attributes.style "position" "absolute"
-        , Html.Attributes.class "virtual-list-item"
-        ]
+        ([ Html.Attributes.id id
+         , Html.Attributes.style "transform" ("translateY(" ++ String.fromFloat top ++ "px)")
+         , Html.Attributes.style "position" "absolute"
+         , Html.Attributes.class "virtual-list-item"
+         ]
+            ++ (if hidden then
+                    [ Html.Attributes.style "visibility" "hidden" ]
+
+                else
+                    []
+               )
+        )
         [ renderRow ]
 
 
