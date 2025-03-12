@@ -92,7 +92,6 @@ Render the virtual list in your **view:**
 -}
 
 import Browser.Dom
-import Constants
 import Dict exposing (Dict, foldl)
 import Html exposing (Html, div)
 import Html.Attributes
@@ -101,11 +100,12 @@ import Html.Lazy exposing (lazy3)
 import Json.Decode as Decode
 import List
 import List.Extra
-import Measurable exposing (Measurable(..))
 import Process
 import Set exposing (Set)
 import Task
 import VirtualList.Config as Config exposing (Config(..))
+import VirtualList.Constants as Constants
+import VirtualList.Measurable as Measurable exposing (Measurable(..))
 
 
 log : String -> a -> a

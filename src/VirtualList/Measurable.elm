@@ -1,4 +1,4 @@
-module Measurable exposing (..)
+module VirtualList.Measurable exposing (..)
 
 
 type Measurable a

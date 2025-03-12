@@ -1,4 +1,4 @@
-module Constants exposing (..)
+module VirtualList.Constants exposing (..)
 
 
 maxBufferMultiplier : Int
