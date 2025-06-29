@@ -105,6 +105,7 @@ import Set exposing (Set)
 import Task
 import VirtualList.Config as Config exposing (Config(..))
 import VirtualList.Constants as Constants
+import VirtualList.ListModel as ListModel exposing (ListModel(..))
 import VirtualList.Measurable as Measurable exposing (Measurable(..))
 
 
@@ -135,7 +136,7 @@ type Model
 type alias InternalModel =
     { itemIds : List String
     , currentBuffer : Int
-    , listIsVisible : Bool
+    , list : ListModel
     , visibleRows : ( Int, Int )
     , unmeasuredRows : Set Int
     , rowHeights : Dict Int RowHeight
@@ -220,7 +221,7 @@ initWithConfig config =
     Model
         { itemIds = []
         , currentBuffer = settings.baseBuffer
-        , listIsVisible = Config.getShowListDuringMeasurement config
+        , list = ListModel.init config
         , visibleRows = initialVisibleRows
         , unmeasuredRows = Set.empty
         , rowHeights = Dict.empty
@@ -406,13 +407,13 @@ continueScrollToTarget model =
 
         ManualScroll ->
             -- This would happen if the list size changes and the changed position would be seen as a manual scroll
-            ( { model | listIsVisible = True }, Cmd.none )
+            ( hideListIfNecessary model True, Cmd.none )
 
         SearchingForItem _ ->
             ( model, Cmd.none )
 
         NoScroll ->
-            ( { model | listIsVisible = True }, Cmd.none )
+            ( hideListIfNecessary model True, Cmd.none )
 
 
 processScroll : InternalModel -> InProgressScrollState -> ( InternalModel, Cmd Msg )
@@ -547,7 +548,7 @@ setItemsAndRemeasure (Model model) { newIds, idsToRemeasure } =
 
         newModel =
             newModelPre
-                |> setListVisibility
+                |> hideListIfNecessary
                 |> Model
 
         checkVisibilityCmd =
@@ -667,7 +668,7 @@ measureElementAndScroll model index result =
             updateRowHeightAndScroll model index element
 
         Err error ->
-            ( model |> setListVisibility, scrollCloserToTarget model error model.scrollState )
+            ( model |> hideListIfNecessary, scrollCloserToTarget model error model.scrollState )
 
 
 scrollCloserToTarget : InternalModel -> Browser.Dom.Error -> ScrollState -> Cmd Msg
@@ -709,7 +710,7 @@ updateRowHeightAndScroll model index element =
             else
                 Cmd.none
     in
-    ( newModel |> setListVisibility
+    ( newModel |> hideListIfNecessary
     , cmd
     )
 
@@ -771,18 +772,30 @@ measureVisibleRows model =
                 | visibleRows = visibleRows
                 , unmeasuredRows = Set.fromList unmeasuredIndices
             }
-                |> setListVisibility
+                |> hideListIfNecessary
     in
     ( newModel, measureCmds )
 
 
-setListVisibility : InternalModel -> InternalModel
-setListVisibility model =
+hideListIfNecessary : InternalModel -> InternalModel
+hideListIfNecessary model =
     if model.listIsVisible then
-        { model | listIsVisible = log "should show list" (shouldShowList model) }
+        setListVisibility model (log "should show list" (shouldShowList model))
 
     else
         model
+
+
+setListVisibility : InternalModel -> Bool -> InternalModel
+setListVisibility model visibility =
+    let
+        (ListModel list) =
+            model.list
+
+        updatedList =
+            { list | isVisible = visibility }
+    in
+    { model | list = ListModel updatedList }
 
 
 shouldShowList : InternalModel -> Bool
