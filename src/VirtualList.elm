@@ -407,13 +407,13 @@ continueScrollToTarget model =
 
         ManualScroll ->
             -- This would happen if the list size changes and the changed position would be seen as a manual scroll
-            ( hideListIfNecessary model True, Cmd.none )
+            ( showList model, Cmd.none )
 
         SearchingForItem _ ->
             ( model, Cmd.none )
 
         NoScroll ->
-            ( hideListIfNecessary model True, Cmd.none )
+            ( showList model, Cmd.none )
 
 
 processScroll : InternalModel -> InProgressScrollState -> ( InternalModel, Cmd Msg )
@@ -473,7 +473,7 @@ processScroll model scrollState =
     if isVisible || isClose then
         if scrollState.stableCount >= Constants.scrollStabilityThreshold then
             log "✅ Scrolling Done" logMessage
-                |> (\_ -> ( { model | scrollState = NoScroll, listIsVisible = True }, cmd ))
+                |> (\_ -> ( stopScrollingAndShowList model, cmd ))
 
         else
             log "❓ Scrolling Might Be Done" logMessage
@@ -499,7 +499,7 @@ processScroll model scrollState =
 
     else
         log "🛑 Max retries reached, stopping scroll attempt." logMessage
-            |> (\_ -> ( { model | scrollState = NoScroll, listIsVisible = True }, Cmd.none ))
+            |> (\_ -> ( stopScrollingAndShowList model, Cmd.none ))
 
 
 {-| Updates the **list of displayed items**.
@@ -779,23 +779,34 @@ measureVisibleRows model =
 
 hideListIfNecessary : InternalModel -> InternalModel
 hideListIfNecessary model =
-    if model.listIsVisible then
-        setListVisibility model (log "should show list" (shouldShowList model))
+    let
+        (ListModel list) =
+            model.list
+    in
+    if list.isVisible then
+        setListVisibility (log "should show list" (shouldShowList model)) model
 
     else
         model
 
 
-setListVisibility : InternalModel -> Bool -> InternalModel
-setListVisibility model visibility =
+stopScrollingAndShowList : InternalModel -> InternalModel
+stopScrollingAndShowList model =
     let
-        (ListModel list) =
-            model.list
-
-        updatedList =
-            { list | isVisible = visibility }
+        newModel =
+            showList model
     in
-    { model | list = ListModel updatedList }
+    { newModel | scrollState = NoScroll }
+
+
+showList : InternalModel -> InternalModel
+showList model =
+    setListVisibility True model
+
+
+setListVisibility : Bool -> InternalModel -> InternalModel
+setListVisibility visibility model =
+    { model | list = ListModel.setVisibility visibility model.list }
 
 
 shouldShowList : InternalModel -> Bool
@@ -981,7 +992,7 @@ increaseAttemptsAndAttemptScrollInNextUpdateCycle model id alignment attempts =
 
     else
         -- Maximum attempts reached; clear pending scroll.
-        ( { model | scrollState = NoScroll, listIsVisible = True }, Cmd.none )
+        ( stopScrollingAndShowList model, Cmd.none )
 
 
 startScrollingInNextUpdateCycle : String -> Alignment -> Cmd Msg
@@ -1116,6 +1127,9 @@ renderRow model id =
 view : (String -> Html msg) -> Model -> (Msg -> msg) -> Html msg
 view renderRow (Model model) toSelf =
     let
+        (ListModel list) =
+            model.list
+
         height =
             String.fromFloat (totalHeight model.cumulativeRowHeights)
 
@@ -1123,7 +1137,7 @@ view renderRow (Model model) toSelf =
             renderRows model renderRow
     in
     div
-        (listAttributes model.listIsVisible model.settings.listId toSelf)
+        (listAttributes list.isVisible model.settings.listId toSelf)
         [ renderSpacer height rows ]
 
 
@@ -1152,7 +1166,7 @@ renderRows model renderRow =
 
 
 listAttributes : Bool -> String -> (Msg -> msg) -> List (Html.Attribute msg)
-listAttributes showList listId toSelf =
+listAttributes listIsVisible listId toSelf =
     [ Html.Attributes.class "virtual-list"
     , Html.Attributes.id listId
 
@@ -1161,7 +1175,7 @@ listAttributes showList listId toSelf =
     , Html.Attributes.style "overflow" "auto"
     , onScroll (toSelf << Scrolled)
     ]
-        ++ (if not showList then
+        ++ (if not listIsVisible then
                 [ Html.Attributes.style "visibility" "hidden" ]
 
             else
