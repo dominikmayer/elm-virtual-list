@@ -448,15 +448,6 @@ processScroll model scrollState =
                 _ ->
                     0
 
-        newAttempts =
-            retryCount + 1
-
-        shouldRetry =
-            newAttempts < Constants.maxScrollRetries
-
-        stillTooFar =
-            not isVisible && scrollOffset > 1.5 * Constants.scrollTargetToleranceInPixel
-
         logMessage =
             { scrollTop = viewport.scrollTop
             , targetOffset = newTargetOffset
@@ -489,17 +480,28 @@ processScroll model scrollState =
                         )
                    )
 
-    else if shouldRetry && stillTooFar then
-        log "🔄 Still Scrolling - Retrying Scroll" logMessage
-            |> (\_ ->
-                    ( model
-                    , cmd
-                    )
-               )
-
     else
-        log "🛑 Max retries reached, stopping scroll attempt." logMessage
-            |> (\_ -> ( stopScrollingAndShowList model, Cmd.none ))
+        let
+            newAttempts =
+                retryCount + 1
+
+            shouldRetry =
+                newAttempts < Constants.maxScrollRetries
+
+            stillTooFar =
+                not isVisible && scrollOffset > 1.5 * Constants.scrollTargetToleranceInPixel
+        in
+        if shouldRetry && stillTooFar then
+            log "🔄 Still Scrolling - Retrying Scroll" logMessage
+                |> (\_ ->
+                        ( model
+                        , cmd
+                        )
+                   )
+
+        else
+            log "🛑 Max retries reached, stopping scroll attempt." logMessage
+                |> (\_ -> ( stopScrollingAndShowList model, Cmd.none ))
 
 
 {-| Updates the **list of displayed items**.
@@ -1025,9 +1027,6 @@ scrollCmdForKnownTarget model index alignment =
         scrollNeeded =
             needsScrollCorrection model elementStart
 
-        containerHeight =
-            Measurable.value model.viewport |> .height
-
         _ =
             log "scrollCmdForKnownTarget"
                 { index = index
@@ -1035,6 +1034,10 @@ scrollCmdForKnownTarget model index alignment =
                 }
     in
     if scrollNeeded then
+        let
+            containerHeight =
+                Measurable.value model.viewport |> .height
+        in
         scrollToPosition
             { listId = model.settings.listId
             , elementStart = elementStart
@@ -1078,9 +1081,6 @@ type alias ScrollPosition =
 scrollToPosition : ScrollPosition -> Cmd Msg
 scrollToPosition position =
     let
-        nextElementStart =
-            Maybe.withDefault position.elementStart position.nextElementStart
-
         finalPosition =
             case position.alignment of
                 Top ->
@@ -1090,6 +1090,10 @@ scrollToPosition position =
                     position.elementStart - 0.5 * position.containerHeight
 
                 Bottom ->
+                    let
+                        nextElementStart =
+                            Maybe.withDefault position.elementStart position.nextElementStart
+                    in
                     nextElementStart - position.containerHeight
     in
     Cmd.batch
