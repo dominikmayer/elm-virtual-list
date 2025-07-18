@@ -489,7 +489,7 @@ processScroll model scrollState =
                 newAttempts < Constants.maxScrollRetries
 
             stillTooFar =
-                not isVisible && scrollOffset > 1.5 * Constants.scrollTargetToleranceInPixel
+                scrollOffset > 1.5 * Constants.scrollTargetToleranceInPixel
         in
         if shouldRetry && stillTooFar then
             log "🔄 Still Scrolling - Retrying Scroll" logMessage
