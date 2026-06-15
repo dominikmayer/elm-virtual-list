@@ -25,7 +25,3 @@ scrollTargetToleranceInPixel : Float
 scrollTargetToleranceInPixel =
     20
 
-
-showDebugLogs : Bool
-showDebugLogs =
-    False

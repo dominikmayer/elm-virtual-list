@@ -111,11 +111,8 @@ import VirtualList.Measurable as Measurable exposing (Measurable(..))
 
 log : String -> a -> a
 log msg value =
-    if Constants.showDebugLogs then
-        Debug.log msg value
-
-    else
-        value
+    -- Debug.log msg value
+    value
 
 
 {-| The `Model` stores the **virtual list’s state.** Include it in your application’s model:
