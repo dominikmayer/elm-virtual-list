@@ -105,16 +105,14 @@ import Set exposing (Set)
 import Task
 import VirtualList.Config as Config exposing (Config(..))
 import VirtualList.Constants as Constants
+import VirtualList.ListModel as ListModel exposing (ListModel(..))
 import VirtualList.Measurable as Measurable exposing (Measurable(..))
 
 
 log : String -> a -> a
 log msg value =
-    if Constants.showDebugLogs then
-        Debug.log msg value
-
-    else
-        value
+    -- Debug.log msg value
+    value
 
 
 {-| The `Model` stores the **virtual list’s state.** Include it in your application’s model:
@@ -135,7 +133,7 @@ type Model
 type alias InternalModel =
     { itemIds : List String
     , currentBuffer : Int
-    , listIsVisible : Bool
+    , list : ListModel
     , visibleRows : ( Int, Int )
     , unmeasuredRows : Set Int
     , rowHeights : Dict Int RowHeight
@@ -220,7 +218,7 @@ initWithConfig config =
     Model
         { itemIds = []
         , currentBuffer = settings.baseBuffer
-        , listIsVisible = Config.getShowListDuringMeasurement config
+        , list = ListModel.init config
         , visibleRows = initialVisibleRows
         , unmeasuredRows = Set.empty
         , rowHeights = Dict.empty
@@ -406,13 +404,13 @@ continueScrollToTarget model =
 
         ManualScroll ->
             -- This would happen if the list size changes and the changed position would be seen as a manual scroll
-            ( { model | listIsVisible = True }, Cmd.none )
+            ( showList model, Cmd.none )
 
         SearchingForItem _ ->
             ( model, Cmd.none )
 
         NoScroll ->
-            ( { model | listIsVisible = True }, Cmd.none )
+            ( showList model, Cmd.none )
 
 
 processScroll : InternalModel -> InProgressScrollState -> ( InternalModel, Cmd Msg )
@@ -447,15 +445,6 @@ processScroll model scrollState =
                 _ ->
                     0
 
-        newAttempts =
-            retryCount + 1
-
-        shouldRetry =
-            newAttempts < Constants.maxScrollRetries
-
-        stillTooFar =
-            not isVisible && scrollOffset > 1.5 * Constants.scrollTargetToleranceInPixel
-
         logMessage =
             { scrollTop = viewport.scrollTop
             , targetOffset = newTargetOffset
@@ -472,7 +461,7 @@ processScroll model scrollState =
     if isVisible || isClose then
         if scrollState.stableCount >= Constants.scrollStabilityThreshold then
             log "✅ Scrolling Done" logMessage
-                |> (\_ -> ( { model | scrollState = NoScroll, listIsVisible = True }, cmd ))
+                |> (\_ -> ( stopScrollingAndShowList model, cmd ))
 
         else
             log "❓ Scrolling Might Be Done" logMessage
@@ -488,17 +477,28 @@ processScroll model scrollState =
                         )
                    )
 
-    else if shouldRetry && stillTooFar then
-        log "🔄 Still Scrolling - Retrying Scroll" logMessage
-            |> (\_ ->
-                    ( model
-                    , cmd
-                    )
-               )
-
     else
-        log "🛑 Max retries reached, stopping scroll attempt." logMessage
-            |> (\_ -> ( { model | scrollState = NoScroll, listIsVisible = True }, Cmd.none ))
+        let
+            newAttempts =
+                retryCount + 1
+
+            shouldRetry =
+                newAttempts < Constants.maxScrollRetries
+
+            stillTooFar =
+                scrollOffset > 1.5 * Constants.scrollTargetToleranceInPixel
+        in
+        if shouldRetry && stillTooFar then
+            log "🔄 Still Scrolling - Retrying Scroll" logMessage
+                |> (\_ ->
+                        ( model
+                        , cmd
+                        )
+                   )
+
+        else
+            log "🛑 Max retries reached, stopping scroll attempt." logMessage
+                |> (\_ -> ( stopScrollingAndShowList model, Cmd.none ))
 
 
 {-| Updates the **list of displayed items**.
@@ -547,7 +547,7 @@ setItemsAndRemeasure (Model model) { newIds, idsToRemeasure } =
 
         newModel =
             newModelPre
-                |> setListVisibility
+                |> hideListIfNecessary
                 |> Model
 
         checkVisibilityCmd =
@@ -667,7 +667,7 @@ measureElementAndScroll model index result =
             updateRowHeightAndScroll model index element
 
         Err error ->
-            ( model |> setListVisibility, scrollCloserToTarget model error model.scrollState )
+            ( model |> hideListIfNecessary, scrollCloserToTarget model error model.scrollState )
 
 
 scrollCloserToTarget : InternalModel -> Browser.Dom.Error -> ScrollState -> Cmd Msg
@@ -709,7 +709,7 @@ updateRowHeightAndScroll model index element =
             else
                 Cmd.none
     in
-    ( newModel |> setListVisibility
+    ( newModel |> hideListIfNecessary
     , cmd
     )
 
@@ -771,18 +771,41 @@ measureVisibleRows model =
                 | visibleRows = visibleRows
                 , unmeasuredRows = Set.fromList unmeasuredIndices
             }
-                |> setListVisibility
+                |> hideListIfNecessary
     in
     ( newModel, measureCmds )
 
 
-setListVisibility : InternalModel -> InternalModel
-setListVisibility model =
-    if model.listIsVisible then
-        { model | listIsVisible = log "should show list" (shouldShowList model) }
+hideListIfNecessary : InternalModel -> InternalModel
+hideListIfNecessary model =
+    let
+        (ListModel list) =
+            model.list
+    in
+    if list.isVisible then
+        setListVisibility (log "should show list" (shouldShowList model)) model
 
     else
         model
+
+
+stopScrollingAndShowList : InternalModel -> InternalModel
+stopScrollingAndShowList model =
+    let
+        newModel =
+            showList model
+    in
+    { newModel | scrollState = NoScroll }
+
+
+showList : InternalModel -> InternalModel
+showList model =
+    setListVisibility True model
+
+
+setListVisibility : Bool -> InternalModel -> InternalModel
+setListVisibility visibility model =
+    { model | list = ListModel.setVisibility visibility model.list }
 
 
 shouldShowList : InternalModel -> Bool
@@ -968,7 +991,7 @@ increaseAttemptsAndAttemptScrollInNextUpdateCycle model id alignment attempts =
 
     else
         -- Maximum attempts reached; clear pending scroll.
-        ( { model | scrollState = NoScroll, listIsVisible = True }, Cmd.none )
+        ( stopScrollingAndShowList model, Cmd.none )
 
 
 startScrollingInNextUpdateCycle : String -> Alignment -> Cmd Msg
@@ -1001,9 +1024,6 @@ scrollCmdForKnownTarget model index alignment =
         scrollNeeded =
             needsScrollCorrection model elementStart
 
-        containerHeight =
-            Measurable.value model.viewport |> .height
-
         _ =
             log "scrollCmdForKnownTarget"
                 { index = index
@@ -1011,6 +1031,10 @@ scrollCmdForKnownTarget model index alignment =
                 }
     in
     if scrollNeeded then
+        let
+            containerHeight =
+                Measurable.value model.viewport |> .height
+        in
         scrollToPosition
             { listId = model.settings.listId
             , elementStart = elementStart
@@ -1054,9 +1078,6 @@ type alias ScrollPosition =
 scrollToPosition : ScrollPosition -> Cmd Msg
 scrollToPosition position =
     let
-        nextElementStart =
-            Maybe.withDefault position.elementStart position.nextElementStart
-
         finalPosition =
             case position.alignment of
                 Top ->
@@ -1066,6 +1087,10 @@ scrollToPosition position =
                     position.elementStart - 0.5 * position.containerHeight
 
                 Bottom ->
+                    let
+                        nextElementStart =
+                            Maybe.withDefault position.elementStart position.nextElementStart
+                    in
                     nextElementStart - position.containerHeight
     in
     Cmd.batch
@@ -1103,6 +1128,9 @@ renderRow model id =
 view : (String -> Html msg) -> Model -> (Msg -> msg) -> Html msg
 view renderRow (Model model) toSelf =
     let
+        (ListModel list) =
+            model.list
+
         height =
             String.fromFloat (totalHeight model.cumulativeRowHeights)
 
@@ -1110,7 +1138,7 @@ view renderRow (Model model) toSelf =
             renderRows model renderRow
     in
     div
-        (listAttributes model.listIsVisible model.settings.listId toSelf)
+        (listAttributes list.isVisible model.settings.listId toSelf)
         [ renderSpacer height rows ]
 
 
@@ -1139,7 +1167,7 @@ renderRows model renderRow =
 
 
 listAttributes : Bool -> String -> (Msg -> msg) -> List (Html.Attribute msg)
-listAttributes showList listId toSelf =
+listAttributes listIsVisible listId toSelf =
     [ Html.Attributes.class "virtual-list"
     , Html.Attributes.id listId
 
@@ -1148,7 +1176,7 @@ listAttributes showList listId toSelf =
     , Html.Attributes.style "overflow" "auto"
     , onScroll (toSelf << Scrolled)
     ]
-        ++ (if not showList then
+        ++ (if not listIsVisible then
                 [ Html.Attributes.style "visibility" "hidden" ]
 
             else
