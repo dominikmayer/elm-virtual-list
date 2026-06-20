@@ -3,6 +3,7 @@ module VirtualList exposing
     , view
     , setItems, setItemsAndRemeasureAll, setItemsAndRemeasure
     , scrollToItem, Alignment(..)
+    , remeasureViewport
     )
 
 {-| Efficiently displays large lists by **rendering only visible items** plus a configurable buffer.
@@ -77,7 +78,7 @@ Render the virtual list in your **view:**
 
 # Rendering
 
-@docs view
+@docs view, remeasureViewport
 
 
 # Setting and Updating the Items
@@ -1247,6 +1248,15 @@ slice start end list =
 onScroll : (Float -> msg) -> Html.Attribute msg
 onScroll toMsg =
     on "scroll" (Decode.map toMsg (Decode.at [ "target", "scrollTop" ] Decode.float))
+
+
+{-| **Remeasures the viewport height.** Call this when the container changes size,
+for example in a `ResizeObserver` callback, to keep the visible item range correct.
+
+-}
+remeasureViewport : Model -> Cmd Msg
+remeasureViewport (Model model) =
+    measureViewport model.settings.listId
 
 
 measureViewport : String -> Cmd Msg
